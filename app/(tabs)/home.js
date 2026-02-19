@@ -1,16 +1,81 @@
 ﻿import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
 import { useRouter } from "expo-router";
-import { useState } from "react"; // Added useState
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
 
 export default function Home() {
   const router = useRouter();
 
-  // --- LOGIC STATE ---
-  const isAdmin = true; 
-  // State to simulate a new task submission notification
-  const [hasNewSubmission, setHasNewSubmission] = useState(true);
+  const [user, setUser] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchData = async () => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      
+      if (!token) {
+        setLoading(false);
+        router.replace("/login"); // Redirect if no token
+        return;
+      }
+
+      const headers = { Authorization: `Bearer ${token}` };
+
+      // 1. Fetch Data in Parallel for speed
+      const [userRes, projectRes] = await Promise.allSettled([
+        axios.get(`${API_URL}/users/me`, { headers }),
+        axios.get(`${API_URL}/projects`, { headers })
+      ]);
+
+      // --- HANDLE USER DATA ---
+      if (userRes.status === "fulfilled") {
+        // Support both {user: {...}} and {...} structures
+        const userData = userRes.value.data.user || userRes.value.data;
+        setUser(userData);
+        // Store for offline fallback
+        await AsyncStorage.setItem("userData", JSON.stringify(userData));
+      } else {
+        console.error("User Fetch Error:", userRes.reason?.response?.status);
+      }
+
+      // --- HANDLE PROJECT DATA ---
+      if (projectRes.status === "fulfilled") {
+        const pData = projectRes.value.data;
+        // Check if data is array, or inside .projects, or inside .data
+        const finalProjects = Array.isArray(pData) 
+          ? pData 
+          : (pData.projects || pData.data || []);
+        setProjects(finalProjects);
+      } else {
+        // This is likely your 400 error source
+        console.error("Project Fetch Error Details:", projectRes.reason?.response?.data);
+      }
+
+    } catch (err) {
+      console.error("Home Critical Error:", err.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData();
+  };
+
+  const featuredProject = projects.length > 0 ? projects[0] : null;
 
   const crispShadow = {
     shadowColor: "#000",
@@ -20,121 +85,116 @@ export default function Home() {
     elevation: 4, 
   };
 
-  const activeProjects = [
-    { id: 1, title: "Thesis Research", dept: "Science", time: "2d left", progress: 75, color: "#1a1a1a" },
-    { id: 2, title: "App Development", dept: "CS", time: "5d left", progress: 45, color: "#4f46e5" },
-  ];
-
-  // Logic for the Alert Action
-  const handleAlertPress = () => {
-    Alert.alert(
-      "Task Submission",
-      "Sarah Chen has submitted 'Literature Review Draft'. Would you like to review it now?",
-      [
-        { text: "Later", style: "cancel" },
-        { 
-          text: "Review Now", 
-          onPress: () => {
-            setHasNewSubmission(false); // Clear alert dot
-            router.push("/admin"); // Navigate to review area
-          } 
-        }
-      ]
+  if (loading) {
+    return (
+      <View className="flex-1 justify-center items-center bg-white">
+        <ActivityIndicator size="large" color="#6366f1" />
+        <Text className="mt-4 text-gray-400 font-medium">Loading Workspace...</Text>
+      </View>
     );
-  };
+  }
 
   return (
     <SafeAreaView style={{ flex: 1 }} className="bg-white">
-      <ScrollView showsVerticalScrollIndicator={false} className="px-6 pt-4">
+      <ScrollView 
+        showsVerticalScrollIndicator={false} 
+        className="px-6 pt-4"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} color="#6366f1" />}
+      >
         
         {/* HEADER AREA */}
         <View className="flex-row justify-between items-center mb-8">
           <View>
-            <Text className="text-gray-400 text-sm font-semibold uppercase tracking-tighter">Jan 2026</Text>
-            <Text className="text-3xl font-bold text-black tracking-tight">Dashboard</Text>
+            <Text className="text-gray-400 text-sm font-semibold uppercase tracking-widest">
+              Welcome back,
+            </Text>
+            <Text className="text-3xl font-black text-black tracking-tight">
+              {user?.fullName?.split(' ')[0] || user?.name || "User"}
+            </Text>
           </View>
 
           <View className="flex-row items-center gap-3">
-            {/* ADMIN ALERT BUTTON (Bell Icon) */}
-            {isAdmin && (
-              <Pressable 
-                onPress={handleAlertPress}
-                style={crispShadow}
-                className="w-11 h-11 rounded-2xl bg-white border border-gray-100 items-center justify-center"
-              >
-                <Ionicons name="notifications-outline" size={22} color="black" />
-                {/* Red Logic Dot: Visible only if there's a submission */}
-                {hasNewSubmission && (
-                  <View className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />
-                )}
-              </Pressable>
-            )}
-
-            {/* ADMIN DIRECTORY ICON */}
-            {isAdmin && (
-              <Pressable 
-                onPress={() => router.push("/admin")} 
-                style={crispShadow}
-                className="w-11 h-11 rounded-2xl bg-gray-50 border border-gray-100 items-center justify-center"
-              >
-                <Ionicons name="people-outline" size={22} color="black" />
-              </Pressable>
-            )}
-
-            {/* PROFILE ICON */}
             <Pressable 
               onPress={() => router.push("/profile-details")} 
               style={crispShadow}
-              className="w-11 h-11 rounded-2xl bg-white border border-gray-100 items-center justify-center"
+              className="w-12 h-12 rounded-2xl bg-white border border-gray-100 items-center justify-center"
             >
-              <Ionicons name="person" size={20} color="black" />
+              <Ionicons name="person-circle-outline" size={26} color="black" />
             </Pressable>
           </View>
         </View>
 
         {/* HERO CARD */}
-        <Pressable 
-          onPress={() => router.push("/task-details")} 
-          className="bg-black p-6 rounded-[30px] mb-8"
-        >
-          <Text className="text-white text-xl font-bold leading-7 mb-6">
-            Submit Final Year Project Documentation Phase 1
-          </Text>
-          <View className="flex-row items-center gap-4">
-            <View className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
-              <View style={{ width: '82%' }} className="h-full bg-white rounded-full" />
+        {featuredProject ? (
+          <Pressable 
+            onPress={() => router.push({ pathname: "/project-details", params: { id: featuredProject._id } })} 
+            className="bg-indigo-600 p-6 rounded-[35px] mb-8 shadow-xl shadow-indigo-200"
+          >
+             <View className="flex-row justify-between items-center mb-4">
+                <Text className="text-white/70 text-[10px] font-black uppercase tracking-[2px]">
+                    Active Project
+                </Text>
+                <Ionicons name="rocket-outline" size={16} color="white" />
+             </View>
+            <Text className="text-white text-2xl font-bold leading-8 mb-6">
+              {featuredProject.title}
+            </Text>
+            <View className="flex-row items-center gap-4">
+              <View className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
+                <View 
+                  style={{ width: `${featuredProject.progress || 0}%` }} 
+                  className="h-full bg-white rounded-full" 
+                />
+              </View>
+              <Text className="text-white font-black text-xs">{featuredProject.progress || 0}%</Text>
             </View>
-            <Text className="text-white font-bold text-xs">82%</Text>
+          </Pressable>
+        ) : (
+          <View className="bg-slate-50 p-10 rounded-[35px] mb-8 border border-dashed border-slate-200 items-center">
+             <View className="w-16 h-16 bg-white rounded-full items-center justify-center shadow-sm mb-4">
+                <Ionicons name="briefcase-outline" size={28} color="#cbd5e1" />
+             </View>
+             <Text className="text-slate-400 font-bold text-center">No projects assigned to you yet.</Text>
           </View>
-        </Pressable>
+        )}
 
         {/* TRACKERS HEADER */}
-        <View className="flex-row justify-between items-end mb-4">
-          <Text className="text-lg font-bold text-black italic">Active Trackers</Text>
+        <View className="flex-row justify-between items-end mb-6 px-1">
+          <Text className="text-xl font-black text-black">Your Trackers</Text>
           <Pressable onPress={() => router.push("/projects")}> 
-            <Text className="text-gray-400 text-xs font-bold">View all</Text>
+            <Text className="text-indigo-600 text-xs font-black uppercase">See All</Text>
           </Pressable>
         </View>
 
-        {activeProjects.map((project) => (
-          <Pressable 
-            key={project.id} 
-            onPress={() => router.push({ pathname: "/project-details", params: { id: project.id } })} 
-            style={crispShadow}
-            className="flex-row items-center bg-white border border-gray-100 p-4 rounded-2xl mb-3"
-          >
-            <View style={{ backgroundColor: project.color }} className="w-12 h-12 rounded-xl items-center justify-center mr-4">
-              <Ionicons name="folder-outline" size={20} color="white" />
+        {/* PROJECT LIST */}
+        <View className="pb-10">
+          {projects.length > 0 ? (
+            projects.map((project) => (
+              <Pressable 
+                key={project._id} 
+                onPress={() => router.push({ pathname: "/project-details", params: { id: project._id } })} 
+                style={crispShadow}
+                className="flex-row items-center bg-white border border-slate-50 p-5 rounded-[25px] mb-4"
+              >
+                <View className="w-12 h-12 rounded-2xl bg-slate-50 items-center justify-center mr-4 border border-slate-100">
+                  <Ionicons name="layers-outline" size={20} color="#6366f1" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-black font-bold text-[16px] mb-1">{project.title}</Text>
+                  <Text className="text-slate-400 text-[11px] font-black uppercase tracking-tighter">
+                    {project.status || "In Progress"}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+              </Pressable>
+            ))
+          ) : (
+            <View className="items-center py-10">
+              <Ionicons name="file-tray-outline" size={48} color="#e2e8f0" />
+              <Text className="text-center text-slate-300 mt-4 font-bold">List is empty</Text>
             </View>
-            <View className="flex-1">
-              <Text className="text-black font-bold text-[15px] mb-0.5">{project.title}</Text>
-              <Text className="text-gray-400 text-[11px] font-medium uppercase">{project.dept} • {project.time}</Text>
-            </View>
-            <View className="bg-gray-100 px-2.5 py-1 rounded-lg">
-              <Text className="text-black font-bold text-[10px]">{project.progress}%</Text>
-            </View>
-          </Pressable>
-        ))}
+          )}
+        </View>
 
       </ScrollView>
     </SafeAreaView>

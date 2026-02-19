@@ -1,5 +1,6 @@
 ﻿import { Stack } from "expo-router";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+// ✅ Changed SafeAreaView to SafeAreaProvider in the import below
+import { SafeAreaProvider } from "react-native-safe-area-context"; 
 import "../global.css";
 
 export default function RootLayout() {

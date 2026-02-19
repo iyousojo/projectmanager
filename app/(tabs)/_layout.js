@@ -94,13 +94,7 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* ADMIN (hidden) */}
-      <Tabs.Screen
-        name="admin"
-        options={{
-          tabBarItemStyle: { display: "none" },
-        }}
-      />
+      
     </Tabs>
   );
 }

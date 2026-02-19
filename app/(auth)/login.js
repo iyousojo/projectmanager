@@ -1,138 +1,144 @@
 ﻿import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react"; // Added useState
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View
-} from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
+
+// --- Components ---
+export const CustomToast = ({ visible, message, type, onClose }) => {
+  const slideAnim = useRef(new Animated.Value(-150)).current;
+  useEffect(() => {
+    if (visible) {
+      Animated.spring(slideAnim, { toValue: 60, useNativeDriver: true, bounciness: 8 }).start();
+      const timer = setTimeout(() => handleClose(), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+  const handleClose = () => {
+    Animated.timing(slideAnim, { toValue: -150, duration: 300, useNativeDriver: true }).start(() => onClose());
+  };
+  if (!visible) return null;
+  return (
+    <Animated.View style={{ transform: [{ translateY: slideAnim }], zIndex: 9999 }} className="absolute left-6 right-6">
+      <View className="bg-slate-900 flex-row items-center p-4 rounded-[25px] border border-slate-800 shadow-2xl">
+        <View className={`p-2 rounded-xl mr-3 ${type === 'success' ? 'bg-indigo-500' : 'bg-red-500'}`}>
+          <Ionicons name={type === 'success' ? "checkmark-circle" : "alert-circle"} size={20} color="white" />
+        </View>
+        <View className="flex-1">
+          <Text className="text-white font-black text-[10px] uppercase tracking-widest">{type === 'success' ? "System" : "Security"}</Text>
+          <Text className="text-slate-400 text-xs font-medium">{message}</Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+};
+
+export const InputField = ({ placeholder, icon, secureTextEntry, value, onChangeText, keyboardType }) => (
+  <View className="mb-5 flex-row items-center bg-gray-50 border border-gray-100 rounded-2xl px-4 py-1">
+    <Ionicons name={icon} size={20} color="#9ca3af" />
+    <TextInput
+      placeholder={placeholder}
+      secureTextEntry={secureTextEntry}
+      value={value}
+      onChangeText={onChangeText}
+      keyboardType={keyboardType}
+      className="flex-1 py-4 px-3 text-black text-[16px]"
+      placeholderTextColor="#9ca3af"
+      autoCapitalize="none"
+    />
+  </View>
+);
+
+// --- Main Screen ---
 export default function Login() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const showBackButton = params.from === "register";
-
-  // 1. Create state for the inputs and errors
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [errors, setErrors] = useState({});
+  const [newPassword, setNewPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" });
 
-  // 2. Validation Function
-  const handleLogin = () => {
-    let newErrors = {};
+  useEffect(() => {
+    if (params.status === 'reset' && params.token) setIsResetting(true);
+  }, [params.status, params.token]);
 
-    // Check if email is empty
-    if (!email) {
-      newErrors.email = "Email is required";
-    } else if (!email.includes("@")) {
-      newErrors.email = "Please enter a valid school email";
-    }
-
-    // Check if password is empty
-    if (!password) {
-      newErrors.password = "Password is required";
-    }
-
-    // If there are errors, stop the login process
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
-      return;
-    }
-
-    // If no errors, clear errors and proceed
-    setErrors({});
-    console.log("Logging in with:", email, password);
-    router.replace("/(tabs)/home");
+  const handleLogin = async () => {
+    if (!email || !password) return setToast({ visible: true, message: "Please fill all fields", type: "error" });
+    setLoading(true);
+    try {
+      const expoPushToken = await AsyncStorage.getItem("pushToken");
+      const response = await axios.post(`${API_URL}/auth/login`, { email, password, expoPushToken });
+      await AsyncStorage.setItem("userToken", response.data.token);
+      await AsyncStorage.setItem("userData", JSON.stringify(response.data.user));
+      router.replace("/(tabs)/home");
+    } catch (err) {
+      setToast({ visible: true, message: err.response?.data?.message || "Login failed", type: "error" });
+    } finally { setLoading(false); }
   };
 
-  // 3. Custom Input Component with Error Message
-  const InputField = ({ placeholder, icon, secureTextEntry, value, onChangeText, error }) => (
-    <View className="mb-5">
-      <View className={`flex-row items-center bg-gray-50 border ${error ? 'border-red-500' : 'border-gray-100'} rounded-2xl px-4 py-1`}>
-        <Ionicons name={icon} size={20} color={error ? "#ef4444" : "#9ca3af"} />
-        <TextInput
-          placeholder={placeholder}
-          secureTextEntry={secureTextEntry}
-          value={value}
-          onChangeText={(text) => {
-            onChangeText(text);
-            // Clear error while typing
-            if (error) setErrors(prev => ({ ...prev, [icon.includes('mail') ? 'email' : 'password']: null }));
-          }}
-          className="flex-1 py-4 px-3 text-black text-[16px]"
-          placeholderTextColor="#9ca3af"
-          autoCapitalize="none"
-        />
-      </View>
-      {error && <Text className="text-red-500 text-xs mt-1 ml-2 font-medium">{error}</Text>}
-    </View>
-  );
+  const handleUpdatePassword = async () => {
+    if (newPassword.length < 6) return setToast({ visible: true, message: "Too short", type: "error" });
+    setLoading(true);
+    try {
+      await axios.post(`${API_URL}/auth/reset-password`, { token: params.token, password: newPassword });
+      setToast({ visible: true, message: "Success!", type: "success" });
+      setTimeout(() => setIsResetting(false), 2000);
+    } catch (err) { setToast({ visible: true, message: "Error", type: "error" }); }
+    finally { setLoading(false); }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1 }} className="bg-white">
+      <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onClose={() => setToast({...toast, visible: false})} />
+      
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-8 pt-12">
           
-          <View className="h-10 mb-8">
-            {showBackButton && (
-              <Pressable onPress={() => router.back()} className="w-10 h-10 items-start justify-center">
-                <Ionicons name="arrow-back" size={24} color="black" />
+          <View className="mb-10">
+            <Text className="text-4xl font-extrabold text-black tracking-tight">{isResetting ? "Secure" : "Welcome"}</Text>
+            <Text className="text-4xl font-extrabold text-gray-300 tracking-tight">{isResetting ? "Reset." : "Back."}</Text>
+          </View>
+
+          {isResetting ? (
+            <View>
+              <InputField icon="lock-open-outline" placeholder="New Password" secureTextEntry value={newPassword} onChangeText={setNewPassword} />
+              <Pressable onPress={handleUpdatePassword} className="bg-black py-5 rounded-3xl mt-4 shadow-xl">
+                {loading ? <ActivityIndicator color="white" /> : <Text className="text-white text-center font-bold text-lg">Update Password</Text>}
               </Pressable>
-            )}
-          </View>
-
-          <View className="mb-12">
-            <Text className="text-4xl font-extrabold text-black tracking-tight">Welcome</Text>
-            <Text className="text-4xl font-extrabold text-gray-300 tracking-tight">Back.</Text>
-          </View>
-
-          {/* Form Fields with passed errors */}
-          <View>
-            <InputField 
-              icon="mail-outline" 
-              placeholder="Email Address" 
-              value={email}
-              onChangeText={setEmail}
-              error={errors.email}
-            />
-            <InputField 
-              icon="lock-closed-outline" 
-              placeholder="Password" 
-              secureTextEntry 
-              value={password}
-              onChangeText={setPassword}
-              error={errors.password}
-            />
-            <Text className="text-gray-400 font-medium text-right mt-1">Forgot Password?</Text>
-          </View>
-
-          <View className="mt-10 gap-6">
-            {/* 4. Trigger validation on Press */}
-            <Pressable onPress={handleLogin} className="bg-black py-5 rounded-3xl shadow-xl">
-              <Text className="text-white text-center font-bold text-lg">Sign In</Text>
-            </Pressable>
-            
-            <View className="flex-row items-center">
-              <View className="flex-1 h-[1px] bg-gray-100" />
-              <Text className="mx-4 text-gray-400 font-medium">OR</Text>
-              <View className="flex-1 h-[1px] bg-gray-100" />
+              <Pressable onPress={() => setIsResetting(false)} className="mt-6">
+                <Text className="text-gray-400 text-center font-bold">Back to Login</Text>
+              </Pressable>
             </View>
+          ) : (
+            <View>
+              <InputField icon="mail-outline" placeholder="Email Address" value={email} onChangeText={setEmail} keyboardType="email-address" />
+              <InputField icon="lock-closed-outline" placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+              
+              {/* ✅ RESTORED: Forgot Password Button */}
+              <Pressable onPress={() => router.push("/(auth)/forgot-password")}>
+                <Text className="text-gray-400 font-bold text-right mt-1">Forgot Password?</Text>
+              </Pressable>
 
-            <Pressable onPress={() => router.replace("/(tabs)/home")} className="border border-gray-200 py-5 rounded-3xl">
-              <Text className="text-black text-center font-bold text-lg">Continue as Demo</Text>
-            </Pressable>
-          </View>
+              <Pressable onPress={handleLogin} className="bg-black py-5 rounded-3xl shadow-xl mt-10">
+                {loading ? <ActivityIndicator color="white" /> : <Text className="text-white text-center font-bold text-lg">Sign In</Text>}
+              </Pressable>
 
-          <View className="mt-auto pb-10">
-            <Pressable onPress={() => router.push("/(auth)/register")}>
-              <Text className="text-center text-gray-500">Don’t have an account? <Text className="text-black font-bold">Sign Up</Text></Text>
-            </Pressable>
-          </View>
+              {/* ✅ RESTORED: Register Redirect */}
+              <View className="flex-row justify-center mt-12 mb-10">
+                <Text className="text-gray-400 font-medium">Don't have an account? </Text>
+                <Pressable onPress={() => router.push("/(auth)/register")}>
+                  <Text className="text-black font-black">Register</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

@@ -1,49 +1,53 @@
-import { View, Text, Pressable } from "react-native";
-import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
 
 export default function TaskDetails() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const [loading, setLoading] = useState(false);
+  const [taskStatus, setTaskStatus] = useState(params.status || "Pending");
+
+  const isCompleted = taskStatus === "Completed" || taskStatus === "Approved";
+
+  const handleComplete = async () => {
+    setLoading(true);
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      await axios.put(`${API_URL}/tasks/${params.id}/submit`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      setTaskStatus("Submitted");
+      Alert.alert("Success", "Task submitted!", [{ text: "OK", onPress: () => router.back() }]);
+    } catch (err) {
+      Alert.alert("Error", err.response?.data?.message || "Update failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <SafeAreaView className="flex-1 bg-white px-6">
-      <Pressable onPress={() => router.back()} className="mt-4 w-10 h-10 bg-gray-50 rounded-xl items-center justify-center">
-        <Ionicons name="close" size={24} color="black" />
-      </Pressable>
-
-      <View className="mt-8">
-        <View className="bg-orange-100 self-start px-3 py-1 rounded-lg mb-4">
-          <Text className="text-orange-600 font-bold text-xs uppercase">Priority: High</Text>
+    <SafeAreaView className="flex-1 bg-white">
+      <ScrollView className="p-6">
+        <Pressable onPress={() => router.back()}><Ionicons name="chevron-back" size={24} /></Pressable>
+        <Text className="text-4xl font-black mt-8">{params.title}</Text>
+        <Text className="text-slate-500 text-lg mt-4">{params.description}</Text>
+        <View className="mt-10 p-6 bg-slate-50 rounded-3xl">
+          <Text className="text-slate-400 uppercase text-[10px] font-bold">Deadline</Text>
+          <Text className="font-bold text-lg">{params.deadline || "Not set"}</Text>
         </View>
-        <Text className="text-3xl font-bold text-black leading-tight">Submit Documentation Phase 1</Text>
-        
-        <View className="mt-10 gap-6">
-          <View className="flex-row items-center">
-            <View className="w-10 h-10 bg-gray-50 rounded-xl items-center justify-center mr-4">
-              <Ionicons name="time-outline" size={20} color="black" />
-            </View>
-            <View>
-              <Text className="text-gray-400 text-xs">Due Time</Text>
-              <Text className="font-bold text-black">Today, 11:59 PM</Text>
-            </View>
-          </View>
-
-          <View className="flex-row items-center">
-            <View className="w-10 h-10 bg-gray-50 rounded-xl items-center justify-center mr-4">
-              <Ionicons name="document-text-outline" size={20} color="black" />
-            </View>
-            <View>
-              <Text className="text-gray-400 text-xs">Requirement</Text>
-              <Text className="font-bold text-black">PDF Format only</Text>
-            </View>
-          </View>
-        </View>
-
-        <Pressable className="bg-black py-5 rounded-2xl mt-12 shadow-lg">
-          <Text className="text-white text-center font-bold">Mark as Complete</Text>
+        <Pressable 
+            disabled={isCompleted || loading}
+            onPress={handleComplete} 
+            className={`mt-10 p-5 rounded-2xl items-center ${isCompleted ? 'bg-slate-200' : 'bg-indigo-600'}`}
+        >
+          {loading ? <ActivityIndicator color="white" /> : <Text className="text-white font-bold">{isCompleted ? "Completed" : "Submit Progress"}</Text>}
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

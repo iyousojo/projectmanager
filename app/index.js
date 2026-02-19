@@ -1,31 +1,101 @@
 ﻿import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from 'expo-constants';
+import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
-// Correct import to prevent deprecation warning
+import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// TOGGLE: Set to 'true' to always see this screen during design. 
-// Set to 'false' for the real one-time-only user logic.
 const DEV_ALWAYS_SHOW_WELCOME = true; 
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 export default function Welcome() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
 
+  const registerForPushNotifications = async () => {
+    // 1. Check if it's a physical device (Push doesn't work on most Emulators)
+    if (!Device.isDevice) {
+      console.log("Push notifications only work on physical devices.");
+      return null;
+    }
+
+    try {
+      // 2. Request Permissions
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== 'granted') {
+        console.log("Failed to get push token for push notification!");
+        return null;
+      }
+
+      // 3. Get Project ID (Your unique ID from EAS)
+      // We try to pull it from config first, then use your hardcoded ID as a backup
+      const projectId = 
+        Constants.expoConfig?.extra?.eas?.projectId || 
+        Constants.easConfig?.projectId || 
+        "f83b3abe-edb4-4164-93d8-b2ec65f0da3d"; 
+
+      if (!projectId) {
+        throw new Error("Project ID is missing from app.json and fallback.");
+      }
+
+      // 4. Fetch the Token
+      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      console.log("Device Push Token:", token);
+
+      // 5. Android Channel Setup
+      if (Platform.OS === 'android') {
+        Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF231F7C',
+        });
+      }
+
+      return token;
+
+    } catch (error) {
+      console.error("Error during push notification registration:", error);
+      return null;
+    }
+  };
+
   useEffect(() => {
     const checkStatus = async () => {
-      // 1. If in Dev Mode, skip the storage check
+      // Get the token and save it to storage
+      const token = await registerForPushNotifications();
+      if (token) {
+        await AsyncStorage.setItem("pushToken", token);
+      }
+
       if (DEV_ALWAYS_SHOW_WELCOME) {
         setIsLoading(false);
         return;
       }
-      // 2. Real Logic: Check if user has seen this page before
-      const hasSeen = await AsyncStorage.getItem("hasSeenWelcome");
-      if (hasSeen === "true") {
-        router.replace("/(auth)/login");
-      } else {
+
+      try {
+        const hasSeen = await AsyncStorage.getItem("hasSeenWelcome");
+        if (hasSeen === "true") {
+          router.replace("/(auth)/login");
+        } else {
+          setIsLoading(false);
+        }
+      } catch (e) {
         setIsLoading(false);
       }
     };
@@ -33,11 +103,9 @@ export default function Welcome() {
   }, []);
 
   const handleContinue = async () => {
-    // Save the flag only if we aren't in force-show dev mode
     if (!DEV_ALWAYS_SHOW_WELCOME) {
       await AsyncStorage.setItem("hasSeenWelcome", "true");
     }
-    // Use .replace() so the user cannot click 'back' to the welcome screen
     router.replace("/(auth)/login");
   };
 
@@ -48,22 +116,17 @@ export default function Welcome() {
   );
 
   return (
-    // style={{ flex: 1 }} ensures the container doesn't collapse
     <SafeAreaView style={{ flex: 1 }} className="bg-white">
       <View className="flex-1 px-8 justify-between py-12">
-        {/* Branding Area */}
         <View className="items-center mt-10">
           <View className="w-24 h-24 bg-gray-50 rounded-[30px] items-center justify-center mb-8 border border-gray-100 shadow-sm">
             <Ionicons name="layers" size={50} color="black" />
           </View>
           <Text className="text-5xl font-extrabold text-black tracking-tighter">Project</Text>
           <Text className="text-5xl font-extrabold text-gray-300 tracking-tighter">Manager.</Text>
-          <Text className="text-gray-500 text-center text-lg mt-6 px-4">
-            Manage your academic projects and tasks with complete clarity.
-          </Text>
+          <Text className="text-gray-500 text-center text-lg mt-6 px-4">Manage academic projects with clarity.</Text>
         </View>
 
-        {/* Navigation Buttons */}
         <View className="gap-4">
           <Pressable onPress={handleContinue} className="bg-black py-5 rounded-3xl shadow-xl active:opacity-90">
             <Text className="text-white text-center font-bold text-lg">Get Started</Text>
@@ -72,9 +135,6 @@ export default function Welcome() {
             <Text className="text-black text-center font-bold text-lg">Create Account</Text>
           </Pressable>
         </View>
-         <Text className="text-center text-gray-400  text-sm">
-            v1.0.0 — Organized for Excellence
-          </Text>
       </View>
     </SafeAreaView>
   );

@@ -1,10 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from '@react-native-community/datetimepicker';
+import axios from "axios";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -12,201 +15,199 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
+
 export default function TaskManagement() {
-  const [isMounted, setIsMounted] = useState(false);
-  
-  // --- ROLE STATE ---
-  const [isAdmin, setIsAdmin] = useState(true); // true = Supervisor, false = Student
-
-  // --- DATA STATE ---
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [students, setStudents] = useState([]); 
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [history, setHistory] = useState([]);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
-  
-  const [tasks, setTasks] = useState([
-    { id: 101, studentId: "s1", title: "Chapter 1 Draft", description: "Focus on the problem statement and research questions.", status: "pending", deadline: "2026-03-15" }
-  ]);
-  
-  const [history, setHistory] = useState([
-    { id: 1, studentId: "s1", title: "Project Proposal", description: "Initial abstract approved by the board.", status: "approved", date: "2026-01-05" }
-  ]);
-
-  // Supervisor Form State
   const [taskForm, setTaskForm] = useState({ title: "", deadline: "", description: "" });
   const [showPicker, setShowPicker] = useState(false);
 
-  useEffect(() => { setIsMounted(true); }, []);
-  if (!isMounted) return null;
+  useEffect(() => {
+    loadInitialData();
+  }, []);
 
-  // --- SHARED ACTIONS ---
-  const handleAssignTask = () => {
+  const loadInitialData = async () => {
+    try {
+      const userData = await AsyncStorage.getItem("user");
+      if (!userData) return;
+      const parsedUser = JSON.parse(userData);
+      setUser(parsedUser);
+
+      if (parsedUser.role === 'admin' || parsedUser.role === 'super-admin') {
+        await fetchStudents();
+      } else {
+        await fetchTasks(parsedUser._id); 
+      }
+    } catch (err) {
+      console.error("Load Error:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const fetchStudents = async () => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await axios.get(`${API_URL}/users/my-students`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setStudents(res.data);
+    } catch (err) {
+      console.error("Fetch Students Error", err);
+    }
+  };
+
+  const fetchTasks = async (studentId) => {
+    if (!studentId) return;
+    const token = await AsyncStorage.getItem("userToken");
+    try {
+      const res = await axios.get(`${API_URL}/tasks/user/${studentId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const allTasks = res.data || [];
+      setTasks(allTasks.filter(t => t.status !== 'Approved'));
+      setHistory(allTasks.filter(t => t.status === 'Approved'));
+    } catch (err) {
+      console.error("Fetch Tasks Error:", err);
+    }
+  };
+
+  const handleAssignTask = async () => {
     if (!taskForm.title || !taskForm.deadline || !taskForm.description) {
-      return Alert.alert("Required", "All fields must be filled.");
+      return Alert.alert("Required", "Please fill all fields.");
     }
-    const newTask = { 
-        ...taskForm, 
-        id: Date.now(), 
-        studentId: selectedStudent.id, 
-        status: "pending" 
-    };
-    setTasks([newTask, ...tasks]); 
-    setTaskForm({ title: "", deadline: "", description: "" });
-  };
-
-  const updateStatus = (taskId, newStatus) => {
-    if (newStatus === 'approved') {
-      const task = tasks.find(t => t.id === taskId);
-      setTasks(tasks.filter(tk => tk.id !== taskId));
-      setHistory([{ ...task, status: 'approved', date: new Date().toLocaleDateString() }, ...history]);
-    } else {
-      setTasks(tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      await axios.post(`${API_URL}/tasks`, {
+        ...taskForm,
+        assignedTo: selectedStudent._id
+      }, { headers: { Authorization: `Bearer ${token}` }});
+      Alert.alert("Success", "Task assigned!");
+      setTaskForm({ title: "", deadline: "", description: "" });
+      fetchTasks(selectedStudent._id);
+    } catch (err) {
+      Alert.alert("Error", "Could not assign task.");
     }
   };
 
-  // --- SHARED HISTORY COMPONENT ---
-  const TaskHistorySection = ({ studentId }) => {
-    const studentHistory = history.filter(h => h.studentId === studentId);
-    return (
-      <View className="mt-8">
-        <Text className="text-xl font-bold mb-4">Task History</Text>
-        {studentHistory.length === 0 ? (
-          <Text className="text-gray-400 italic">No history available.</Text>
-        ) : (
-          studentHistory.map(item => (
-            <Pressable 
-              key={item.id} 
-              onPress={() => setExpandedHistoryId(expandedHistoryId === item.id ? null : item.id)}
-              className="bg-white p-6 rounded-[30px] border border-gray-100 mb-3 shadow-sm"
-            >
-              <View className="flex-row justify-between items-center">
-                <View>
-                  <Text className="font-bold text-gray-800">{item.title}</Text>
-                  <Text className="text-gray-400 text-[9px] uppercase font-black">Completed: {item.date}</Text>
+  const updateStatus = async (taskId, endpoint) => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await axios.put(`${API_URL}/tasks/${taskId}/${endpoint}`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      Alert.alert("Success", res.data.message || "Status Updated");
+      const targetId = (user.role === 'admin' || user.role === 'super-admin') ? selectedStudent._id : user._id;
+      fetchTasks(targetId);
+    } catch (err) {
+      Alert.alert("Failed", err.response?.data?.message || "Action failed");
+    }
+  };
+
+  const TaskHistorySection = () => (
+    <View className="mt-8">
+      <Text className="text-xl font-bold mb-4 text-slate-800">Completed Journey</Text>
+      {history.length === 0 ? (
+        <Text className="text-gray-400 italic text-xs px-2">No approved tasks yet.</Text>
+      ) : (
+        history.map(item => (
+          <Pressable 
+            key={item._id} 
+            onPress={() => setExpandedHistoryId(expandedHistoryId === item._id ? null : item._id)}
+            className="bg-white p-6 rounded-[30px] border border-gray-100 mb-3 shadow-sm"
+          >
+            <View className="flex-row justify-between items-center">
+              <View>
+                <Text className="font-bold text-gray-800">{item.title}</Text>
+                <View className="bg-emerald-100 px-2 py-0.5 rounded-md mt-1 self-start">
+                    <Text className="text-emerald-700 text-[8px] uppercase font-black">Approved</Text>
                 </View>
-                <Ionicons name={expandedHistoryId === item.id ? "chevron-up" : "chevron-down"} size={16} color="#cbd5e1" />
               </View>
-              {expandedHistoryId === item.id && (
-                <View className="mt-4 pt-4 border-t border-gray-50">
-                  <Text className="text-gray-500 text-xs leading-5 italic">"{item.description}"</Text>
-                </View>
-              )}
-            </Pressable>
-          ))
-        )}
-      </View>
-    );
-  };
+              <Ionicons name={expandedHistoryId === item._id ? "chevron-up" : "chevron-down"} size={16} color="#cbd5e1" />
+            </View>
+            {expandedHistoryId === item._id && (
+              <View className="mt-4 pt-4 border-t border-gray-50">
+                <Text className="text-gray-500 text-xs leading-5 italic">"{item.description}"</Text>
+              </View>
+            )}
+          </Pressable>
+        ))
+      )}
+    </View>
+  );
+
+  if (loading) return <View className="flex-1 justify-center bg-white"><ActivityIndicator color="#6366f1" /></View>;
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      {/* DEBUG SWITCHER */}
-      <Pressable onPress={() => {setIsAdmin(!isAdmin); setSelectedStudent(null);}} className="bg-gray-100 p-2 items-center">
-        <Text className="text-[10px] font-bold text-gray-400 uppercase">Viewing as: {isAdmin ? "ADMIN" : "STUDENT"}</Text>
-      </Pressable>
-
-      <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-        
-        {/* --- ADMIN / SUPERVISOR VIEW --- */}
-        {isAdmin && (
+      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadInitialData} />}>
+        {(user?.role === 'admin' || user?.role === 'super-admin') ? (
           <View className="px-6 pt-6">
             {!selectedStudent ? (
               <>
                 <Text className="text-2xl font-bold mb-6">Student Directory</Text>
-                {[{id: "s1", name: "Sarah Chen"}].map(s => (
-                  <Pressable key={s.id} onPress={() => setSelectedStudent(s)} className="bg-gray-50 p-6 rounded-[30px] flex-row items-center mb-4 border border-gray-100">
-                    <View className="bg-blue-600 w-12 h-12 rounded-full items-center justify-center mr-4">
-                      <Text className="text-white font-bold">{s.name[0]}</Text>
+                {students.map(s => (
+                  <Pressable key={s._id} onPress={() => { setSelectedStudent(s); fetchTasks(s._id); }} className="bg-gray-50 p-6 rounded-[30px] flex-row items-center mb-4 border border-gray-100">
+                    <View className="bg-indigo-600 w-12 h-12 rounded-full items-center justify-center mr-4">
+                      <Text className="text-white font-bold">{s.fullName ? s.fullName[0] : 'S'}</Text>
                     </View>
-                    <Text className="flex-1 font-bold text-lg">{s.name}</Text>
+                    <View className="flex-1">
+                        <Text className="font-bold text-lg text-slate-800">{s.fullName}</Text>
+                        <Text className="text-gray-400 text-xs">{s.email}</Text>
+                    </View>
                     <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
                   </Pressable>
                 ))}
               </>
             ) : (
               <View>
-                <Pressable onPress={() => setSelectedStudent(null)} className="flex-row items-center mb-4">
-                  <Ionicons name="arrow-back" size={18} />
-                  <Text className="ml-2 font-bold text-gray-400">Back</Text>
+                <Pressable onPress={() => { setSelectedStudent(null); setTasks([]); setHistory([]); }} className="flex-row items-center mb-4">
+                  <Ionicons name="arrow-back" size={18} color="#94a3b8" />
+                  <Text className="ml-2 font-bold text-gray-400 uppercase text-[10px]">Back</Text>
                 </Pressable>
-
-                {/* STUDENT NAME AT THE TOP */}
-                <Text className="text-3xl font-bold mb-6">{selectedStudent.name}</Text>
-
-                {/* SUPERVISOR ADD TASK FORM */}
-                <View className="bg-blue-600 p-8 rounded-[40px] mb-8 shadow-lg">
-                  <Text className="text-white font-bold text-lg mb-4">New Requirement</Text>
-                  <TextInput 
-                    placeholder="Title" placeholderTextColor="#94a3b8"
-                    className="bg-white p-4 rounded-2xl mb-2 font-bold"
-                    value={taskForm.title} onChangeText={t => setTaskForm({...taskForm, title: t})}
-                  />
-                  <Pressable onPress={() => setShowPicker(true)} className="bg-white p-4 rounded-2xl mb-2">
-                    <Text className="text-gray-400 font-bold text-xs">{taskForm.deadline || "Select Deadline"}</Text>
-                  </Pressable>
-                  <TextInput 
-                    placeholder="Task description..." placeholderTextColor="#94a3b8"
-                    multiline className="bg-white p-4 rounded-2xl mb-4 min-h-[80px]"
-                    value={taskForm.description} onChangeText={t => setTaskForm({...taskForm, description: t})}
-                  />
-                  <Pressable onPress={handleAssignTask} className="bg-black py-5 rounded-[25px] items-center">
-                    <Text className="text-white font-bold uppercase tracking-widest text-[10px]">Assign Task</Text>
-                  </Pressable>
-                  {showPicker && <DateTimePicker value={new Date()} mode="date" onChange={(e, d) => {
-                    setShowPicker(false);
-                    if(d) setTaskForm({...taskForm, deadline: d.toISOString().split('T')[0]});
-                  }} />}
+                <Text className="text-3xl font-black text-slate-900 mb-6">{selectedStudent.fullName}</Text>
+                <View className="bg-indigo-600 p-8 rounded-[40px] mb-8">
+                  <TextInput placeholder="Task Title" placeholderTextColor="#a5b4fc" className="text-white mb-2 border-b border-white/20 p-2" value={taskForm.title} onChangeText={t => setTaskForm({...taskForm, title: t})} />
+                  <Pressable onPress={() => setShowPicker(true)} className="p-2"><Text className="text-white">{taskForm.deadline || "Select Deadline"}</Text></Pressable>
+                  <TextInput placeholder="Description" placeholderTextColor="#a5b4fc" multiline className="text-white mt-2 p-2" value={taskForm.description} onChangeText={t => setTaskForm({...taskForm, description: t})} />
+                  <Pressable onPress={handleAssignTask} className="bg-white mt-4 p-4 rounded-xl items-center"><Text className="text-indigo-600 font-bold">Assign Task</Text></Pressable>
+                  {showPicker && <DateTimePicker value={new Date()} mode="date" onChange={(e, d) => { setShowPicker(false); if(d) setTaskForm({...taskForm, deadline: d.toISOString().split('T')[0]}); }} />}
                 </View>
-
-                {/* ACTIVE TASKS LIST FOR ADMIN */}
-                <Text className="text-xl font-bold mb-4">Pending Approval</Text>
-                {tasks.filter(t => t.studentId === selectedStudent.id).map(t => (
-                  <View key={t.id} className="bg-gray-50 p-6 rounded-[30px] border border-gray-100 mb-4">
-                    <Text className="font-bold text-blue-600">{t.title}</Text>
-                    {t.status === 'completed' ? (
-                      <Pressable onPress={() => updateStatus(t.id, 'approved')} className="bg-green-600 py-4 rounded-2xl items-center mt-4">
-                        <Text className="text-white font-bold text-xs uppercase">Approve Now</Text>
-                      </Pressable>
-                    ) : (
-                      <Text className="text-gray-400 text-[10px] mt-2 uppercase">Waiting for student...</Text>
-                    )}
+                {tasks.map(t => (
+                  <View key={t._id} className="bg-gray-50 p-6 rounded-[30px] mb-4">
+                    <Text className="font-bold">{t.title}</Text>
+                    {t.status === 'Submitted' ? (
+                      <Pressable onPress={() => updateStatus(t._id, 'approve')} className="bg-emerald-500 p-3 rounded-xl mt-2 items-center"><Text className="text-white">Approve</Text></Pressable>
+                    ) : <Text className="text-amber-600 text-[10px] mt-1 italic">Pending Student...</Text>}
                   </View>
                 ))}
-
-                <TaskHistorySection studentId={selectedStudent.id} />
+                <TaskHistorySection />
               </View>
             )}
           </View>
-        )}
-
-        {/* --- STUDENT VIEW --- */}
-        {!isAdmin && (
+        ) : (
           <View className="px-6 pt-8">
-            <Text className="text-3xl font-bold mb-8">My Workspace</Text>
-            
-            <Text className="text-xl font-bold mb-4">Assigned Tasks</Text>
-            {tasks.filter(t => t.studentId === "s1").map(t => (
-              <View key={t.id} className="bg-black p-8 rounded-[40px] mb-6 shadow-xl">
-                <Text className="text-blue-400 font-bold text-[10px] uppercase mb-1">Due: {t.deadline}</Text>
-                <Text className="text-white text-2xl font-bold mb-4">{t.title}</Text>
-                <View className="bg-white/10 p-5 rounded-3xl mb-6">
-                  <Text className="text-gray-300 text-xs leading-5 italic">"{t.description}"</Text>
+            <Text className="text-3xl font-black mb-8">My Tasks</Text>
+            {tasks.map(t => (
+                <View key={t._id} className="bg-slate-900 p-8 rounded-[40px] mb-6">
+                  <Text className="text-white text-2xl font-bold">{t.title}</Text>
+                  <Text className="text-slate-400 mb-4">{t.description}</Text>
+                  {t.status === 'Pending' ? (
+                    <Pressable onPress={() => updateStatus(t._id, 'submit')} className="bg-white p-4 rounded-xl items-center"><Text className="font-bold">Submit Task</Text></Pressable>
+                  ) : <Text className="text-indigo-400 text-center">Under Review</Text>}
                 </View>
-                {t.status === 'pending' ? (
-                  <Pressable onPress={() => updateStatus(t.id, 'completed')} className="bg-white py-5 rounded-[25px] items-center">
-                    <Text className="text-black font-bold text-xs uppercase tracking-widest">Mark as Completed</Text>
-                  </Pressable>
-                ) : (
-                  <View className="flex-row items-center justify-center">
-                    <ActivityIndicator size="small" color="#3b82f6" />
-                    <Text className="text-blue-400 ml-2 font-bold text-[10px] uppercase">Reviewing by Admin...</Text>
-                  </View>
-                )}
-              </View>
             ))}
-
-            <TaskHistorySection studentId="s1" />
+            <TaskHistorySection />
           </View>
         )}
-
       </ScrollView>
     </SafeAreaView>
   );
