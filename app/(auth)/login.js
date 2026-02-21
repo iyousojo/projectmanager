@@ -68,15 +68,26 @@ export default function Login() {
     if (params.status === 'reset' && params.token) setIsResetting(true);
   }, [params.status, params.token]);
 
-  const handleLogin = async () => {
+const handleLogin = async () => {
     if (!email || !password) return setToast({ visible: true, message: "Please fill all fields", type: "error" });
     setLoading(true);
     try {
       const expoPushToken = await AsyncStorage.getItem("pushToken");
       const response = await axios.post(`${API_URL}/auth/login`, { email, password, expoPushToken });
-      await AsyncStorage.setItem("userToken", response.data.token);
-      await AsyncStorage.setItem("userData", JSON.stringify(response.data.user));
-      router.replace("/(tabs)/home");
+      
+      const { token, user } = response.data;
+
+      // --- CRITICAL: MATCHING KEYS ---
+      await AsyncStorage.setItem("userToken", token);
+      await AsyncStorage.setItem("userData", JSON.stringify(user));
+
+      // Route based on the role we just got from the DB
+      if (user.role === "super-admin") {
+        router.replace("/(admin)/dashboard");
+      } else {
+        router.replace("/(tabs)/home");
+      }
+
     } catch (err) {
       setToast({ visible: true, message: err.response?.data?.message || "Login failed", type: "error" });
     } finally { setLoading(false); }

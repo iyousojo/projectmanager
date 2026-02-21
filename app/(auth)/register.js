@@ -24,16 +24,15 @@ export default function Register() {
   });
 
   const updateForm = (key, value) => setForm({ ...form, [key]: value });
-
-  const handleRegister = async () => {
-    // Basic Validation
+const handleRegister = async () => {
+    // 1. Basic Validation
     if (!form.name || !form.email || !form.password) {
-      Alert.alert("Error", "Please fill in all required fields.");
+      Alert.alert("Required Fields", "Please fill in your name, email, and password.");
       return;
     }
 
     if (form.password !== form.confirmPassword) {
-      Alert.alert("Error", "Passwords do not match!");
+      Alert.alert("Password Mismatch", "Passwords do not match. Please re-type them.");
       return;
     }
 
@@ -41,7 +40,7 @@ export default function Register() {
     try {
       const expoPushToken = await AsyncStorage.getItem("pushToken");
       
-      const response = await axios.post(`${API_URL}/auth/register`, {
+      await axios.post(`${API_URL}/auth/register`, {
         fullName: form.name,
         email: form.email,
         phone: form.phone,
@@ -52,15 +51,33 @@ export default function Register() {
         expoPushToken 
       });
 
-      // SUCCESS: Since verification is removed, we go straight to login
+      // 2. SUCCESS PATH
       Alert.alert(
-        "Success", 
-        "Account created successfully! You can now log in.",
-        [{ text: "OK", onPress: () => router.replace("/login") }]
+        "Welcome!", 
+        "Account created successfully. You can now log in.",
+        [{ text: "Go to Login", onPress: () => router.replace("/login") }]
       );
       
     } catch (err) {
-      Alert.alert("Registration Failed", err.response?.data?.message || "Something went wrong");
+      // 3. ERROR PATH: Handle specific "Email in use" error
+      const errorMessage = err.response?.data?.message || "";
+      
+      if (errorMessage.toLowerCase().includes("email already in use")) {
+        Alert.alert(
+          "Account Exists",
+          "This email is already registered. Would you like to login instead?",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Login", onPress: () => router.replace("/login") }
+          ]
+        );
+      } else {
+        // Generic error for other issues (network, server down, etc.)
+        Alert.alert(
+          "Registration Failed", 
+          errorMessage || "We couldn't create your account right now. Please try again later."
+        );
+      }
     } finally { 
       setLoading(false); 
     }

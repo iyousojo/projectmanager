@@ -1,195 +1,155 @@
+import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
 
-export default function PersonalProjectPage() {
-  const params = useLocalSearchParams();
+export default function ProjectDetails() {
+  const { id } = useLocalSearchParams();
   const router = useRouter();
-
-  // --- STATE ---
   const [project, setProject] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [submissionText, setSubmissionText] = useState("");
-  
-  const [availableStudents, setAvailableStudents] = useState([]);
-  const [assignedStudents, setAssignedStudents] = useState([]);
 
   useEffect(() => {
-    loadInitialData();
-  }, []);
+    const loadDetails = async () => {
+      try {
+        const token = await AsyncStorage.getItem("userToken");
+        const userData = JSON.parse(await AsyncStorage.getItem("userData"));
+        setUser(userData);
 
-  const loadInitialData = async () => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      const userData = JSON.parse(await AsyncStorage.getItem("userData"));
-      setIsAdmin(userData?.role === 'admin' || userData?.role === 'super-admin');
-
-      // 1. Get Project Details
-      const res = await axios.get(`${API_URL}/projects/${params.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setProject(res.data);
-
-      // 2. If Admin, load students for potential grouping
-      if (userData?.role === 'admin') {
-        const studentRes = await axios.get(`${API_URL}/users/superadmin/students`, {
+        const res = await axios.get(`${API_URL}/projects/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        setAvailableStudents(studentRes.data);
-      }
-    } catch (err) {
-      console.error("Load Error:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+        setProject(res.data.project || res.data);
+      } catch (e) {
+        console.error("Load Error:", e.response?.data || e.message);
+        Alert.alert("Error", "Could not load project details.");
+      } finally { setLoading(false); }
+    };
+    loadDetails();
+  }, [id]);
 
-  // --- ACTIONS ---
-  const handleAdminApproval = async () => {
+  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin';
+
+  const updateStatus = async (newStatus) => {
     try {
       const token = await AsyncStorage.getItem("userToken");
-      await axios.put(`${API_URL}/projects/${params.id}`, 
-        { status: 'active' }, 
-        { headers: { Authorization: `Bearer ${token}` }}
+      const res = await axios.patch(`${API_URL}/projects/${id}`, 
+        { status: newStatus }, 
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      Alert.alert("Success", "Project Approved.");
-      loadInitialData();
-    } catch (e) {
-      Alert.alert("Error", "Approval failed.");
-    }
-  };
-
-  const handleSubmitWork = async () => {
-    if (!submissionText.trim()) return;
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      await axios.post(`${API_URL}/tasks`, {
-        projectId: params.id,
-        title: `Submission for ${project.currentStage || 'Current Phase'}`,
-        description: submissionText
-      }, { headers: { Authorization: `Bearer ${token}` }});
       
-      Alert.alert("Sent", "Your work has been submitted for review.");
-      setSubmissionText("");
+      setProject(res.data.project || { ...project, status: newStatus });
+      Alert.alert("Success", `Project status updated to ${newStatus}`);
     } catch (e) {
-      Alert.alert("Error", "Submission failed.");
+      // ✅ LOGGING ACTUAL ERROR FOR DEBUGGING
+      console.error("Update Error:", e.response?.data || e.message);
+      const errorMsg = e.response?.data?.message || "Update failed.";
+      Alert.alert("Denied", errorMsg);
     }
   };
 
-  const finalizeGroupConversion = async () => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      await axios.put(`${API_URL}/projects/${params.id}/group`, {
-        memberIds: assignedStudents.map(s => s._id)
-      }, { headers: { Authorization: `Bearer ${token}` }});
-      
-      setShowAssignModal(false);
-      router.push("/group-workspace");
-    } catch (e) {
-      Alert.alert("Error", "Could not form group.");
-    }
-  };
-
-  if (loading) return <View className="flex-1 justify-center items-center bg-white"><ActivityIndicator color="#6366f1" /></View>;
+  if (loading) return <View className="flex-1 justify-center items-center bg-white"><ActivityIndicator size="large" color="#6366f1" /></View>;
 
   return (
     <SafeAreaView className="flex-1 bg-white" edges={["top"]}>
-      <ScrollView 
-        className="px-6 pt-6" 
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadInitialData} />}
-      >
-        {/* TITLE SECTION */}
-        <View className="mb-6">
-          <Text className="text-3xl font-black tracking-tighter text-gray-900 leading-tight">
-            {project?.title || params.title}
-          </Text>
-          <View className="flex-row items-center mt-2">
-            <View className={`px-2 py-1 rounded-md mr-2 ${project?.status === 'active' ? 'bg-emerald-100' : 'bg-amber-100'}`}>
-              <Text className={`text-[9px] font-black uppercase ${project?.status === 'active' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                {project?.status || 'Pending'}
-              </Text>
-            </View>
-            <Text className="text-gray-400 font-bold text-xs">Lead: {project?.student?.name || "Assigning..."}</Text>
+      <ScrollView className="px-6 pt-6" showsVerticalScrollIndicator={false}>
+        
+        {/* Header Section */}
+        <View className="flex-row justify-between items-start mb-6">
+          <View className="flex-1">
+            <Text className="text-[10px] font-black uppercase tracking-[2px] text-indigo-600 mb-1">
+              {project?.status || 'Pending'} Project
+            </Text>
+            <Text className="text-3xl font-black text-slate-900 leading-tight">{project?.title}</Text>
           </View>
         </View>
 
-        {/* ADMIN GOVERNANCE */}
-        {isAdmin && project?.status !== 'active' && (
-          <View className="bg-indigo-600 p-6 rounded-[35px] mb-8 shadow-xl">
-            <Text className="text-white font-black text-[10px] uppercase mb-4 tracking-widest text-center">Review Phase</Text>
+        {/* Quick Info Chips */}
+        <View className="flex-row gap-2 mb-8">
+           <View className="bg-slate-100 px-4 py-2 rounded-full border border-slate-200">
+             <Text className="text-[10px] font-black text-slate-500 uppercase">Supervisor: {project?.supervisor?.fullName || 'N/A'}</Text>
+           </View>
+           <View className="bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100">
+             <Text className="text-[10px] font-black text-indigo-600 uppercase">Lead: {project?.projectHead?.fullName?.split(' ')[0] || 'N/A'}</Text>
+           </View>
+        </View>
+
+        {/* Description */}
+        <View className="mb-8">
+          <Text className="text-slate-400 font-black text-[10px] uppercase mb-3 tracking-widest">About Project</Text>
+          <View className="bg-gray-50 p-6 rounded-[35px] border border-gray-100">
+            <Text className="text-slate-600 leading-6 text-[15px]">{project?.description}</Text>
+          </View>
+        </View>
+
+        {/* Task History / Timeline Section */}
+        <View className="mb-10">
+          <Text className="text-slate-400 font-black text-[10px] uppercase mb-5 tracking-widest">Task History & Updates</Text>
+          
+          {project?.tasks?.length > 0 ? (
+            project.tasks.map((task, idx) => (
+              <View key={idx} className="flex-row mb-6">
+                <View className="items-center mr-4">
+                  <View className="w-3 h-3 rounded-full bg-indigo-600 mt-1" />
+                  <View className="w-[1px] flex-1 bg-indigo-100 my-1" />
+                </View>
+                <View className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <Text className="font-bold text-slate-800 text-sm">{task.title}</Text>
+                  <Text className="text-slate-500 text-xs mt-1">{task.description || 'No description provided'}</Text>
+                  <Text className="text-[9px] font-black text-slate-400 uppercase mt-2">{new Date(task.createdAt || Date.now()).toLocaleDateString()}</Text>
+                </View>
+              </View>
+            ))
+          ) : (
+            <View className="bg-gray-50 py-8 rounded-[30px] items-center border border-dashed border-gray-200">
+              <Ionicons name="list-outline" size={24} color="#cbd5e1" />
+              <Text className="text-slate-400 font-bold text-xs mt-2">No tasks logged yet.</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ADMIN ONLY ACTIONS */}
+        {isAdmin && (
+          <View className="bg-slate-900 p-7 rounded-[40px] mb-10 shadow-xl">
+            <View className="flex-row items-center mb-5">
+               <View className="w-2 h-2 rounded-full bg-emerald-400 mr-2" />
+               <Text className="text-white font-black text-[10px] uppercase tracking-widest">Control Panel</Text>
+            </View>
+            
             <View className="flex-row gap-3">
-              <Pressable onPress={handleAdminApproval} className="flex-1 bg-white py-4 rounded-2xl items-center">
-                <Text className="text-indigo-600 font-black text-[10px] uppercase">Approve Project</Text>
+              <Pressable 
+                onPress={() => updateStatus('active')} 
+                className="flex-1 bg-indigo-600 py-5 rounded-2xl items-center shadow-sm"
+              >
+                <Text className="text-white font-black text-[10px] uppercase tracking-widest">Approve</Text>
               </Pressable>
-              <Pressable onPress={() => setShowAssignModal(true)} className="flex-1 bg-black/20 py-4 rounded-2xl items-center border border-white/20">
-                <Text className="text-white font-black text-[10px] uppercase">Assign Team</Text>
+              
+              <Pressable 
+                onPress={() => updateStatus('completed')} 
+                className="flex-1 bg-emerald-600 py-5 rounded-2xl items-center shadow-sm"
+              >
+                <Text className="text-white font-black text-[10px] uppercase tracking-widest">Mark Done</Text>
               </Pressable>
             </View>
+            
+            <Pressable 
+               onPress={() => updateStatus('rejected')}
+               className="mt-4 py-3 items-center border border-white/10 rounded-xl"
+            >
+               <Text className="text-rose-400 font-black text-[9px] uppercase tracking-[2px]">Reject Project</Text>
+            </Pressable>
           </View>
         )}
 
-        {/* DESCRIPTION */}
-        <View className="mb-8">
-          <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Project Scope</Text>
-          <View className="bg-gray-50 p-6 rounded-[35px] border border-gray-100">
-            <Text className="text-gray-700 text-sm leading-6">
-              {project?.description || "No description provided for this research project."}
-            </Text>
-          </View>
-        </View>
-
-        {/* SUBMISSION AREA */}
-        <View className="mb-20">
-          <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 px-1">Deliverables</Text>
-          <View className="bg-gray-100 rounded-[35px] p-6 border border-gray-200">
-            <TextInput 
-              placeholder={project?.status === 'active' ? "Describe your current progress..." : "Locked until approval..."}
-              multiline
-              editable={project?.status === 'active'}
-              value={submissionText}
-              onChangeText={setSubmissionText}
-              className="text-gray-800 text-sm mb-6 min-h-[100]"
-              style={{ textAlignVertical: 'top' }}
-            />
-            <Pressable 
-              onPress={handleSubmitWork}
-              className={`py-5 rounded-2xl items-center ${project?.status === 'active' ? 'bg-indigo-600 shadow-lg' : 'bg-gray-300'}`}
-              disabled={project?.status !== 'active'}
-            >
-              <Text className="text-white font-black uppercase text-[10px] tracking-widest">
-                {project?.status === 'active' ? 'Submit Progress' : 'Workspace Locked'}
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+        {/* Footer padding */}
+        <View className="h-10" />
       </ScrollView>
-
-      {/* --- MODAL FOR TEAM ASSIGNMENT --- */}
-      <Modal visible={showAssignModal} animationType="slide" presentationStyle="pageSheet">
-        {/* Reuse your existing Modal UI but ensure toggleStudentAssignment uses _id */}
-        {/* ... (Modal code remains largely the same, just ensure it uses project._id) */}
-      </Modal>
     </SafeAreaView>
   );
 }

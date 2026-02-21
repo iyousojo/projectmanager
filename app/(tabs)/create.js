@@ -3,18 +3,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import axios from "axios";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     FlatList,
     Modal,
-    Platform,
     Pressable,
     ScrollView,
     Text,
     TextInput,
-    View
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -24,7 +23,7 @@ export default function CreateProject() {
     const router = useRouter();
 
     const [userRole, setUserRole] = useState(null);
-    const [userId, setUserId] = useState(null); // Track the current user's ID
+    const [userId, setUserId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [students, setStudents] = useState([]);
     const [fetchingStudents, setFetchingStudents] = useState(true);
@@ -35,16 +34,23 @@ export default function CreateProject() {
         description: "",
         dept: "CS",
         projectType: "Individual",
-        assignedStudent: null, // This holds the object { _id, name }
-        groupMembers: [],
+        assignedStudent: null, // Used for Individual
+        groupMembers: [],      // Used for Group
         deadline: new Date(),
     });
 
     const [modalVisible, setModalVisible] = useState(false);
-    const [selectionType, setSelectionType] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
 
     const isAdmin = userRole === 'admin' || userRole === 'super-admin';
+
+    const handleSafeBack = useCallback(() => {
+        if (router.canGoBack()) {
+            router.back();
+        } else {
+            router.replace("/(tabs)");
+        }
+    }, [router]);
 
     useEffect(() => {
         const initializeData = async () => {
@@ -52,7 +58,7 @@ export default function CreateProject() {
                 const token = await AsyncStorage.getItem("userToken");
                 const storedUser = await AsyncStorage.getItem("user");
                 const parsedUser = storedUser ? JSON.parse(storedUser) : null;
-                
+
                 setUserRole(parsedUser?.role);
                 setUserId(parsedUser?._id);
 
@@ -80,60 +86,80 @@ export default function CreateProject() {
 
     const filteredStudents = useMemo(() => {
         return students.filter(s =>
-            (s.name || s.fullName || "").toLowerCase().includes(searchQuery.toLowerCase())
+            (s.fullName || s.name || "").toLowerCase().includes(searchQuery.toLowerCase())
         );
     }, [searchQuery, students]);
 
+    // NEW LOGIC: Handles single select for Individual and toggle multi-select for Group
     const handleSelectStudent = (student) => {
-        if (selectionType === "assign") {
+        if (formData.projectType === "Individual") {
             setFormData({ ...formData, assignedStudent: student });
+            setModalVisible(false); // Close immediately for individual
         } else {
-            if (!formData.groupMembers.find(m => m._id === student._id)) {
+            const isSelected = formData.groupMembers.find(m => m._id === student._id);
+            if (isSelected) {
+                setFormData({
+                    ...formData,
+                    groupMembers: formData.groupMembers.filter(m => m._id !== student._id)
+                });
+            } else {
                 setFormData({
                     ...formData,
                     groupMembers: [...formData.groupMembers, student]
                 });
             }
+            // Don't close modal so user can pick more
         }
-        setModalVisible(false);
-        setSearchQuery("");
+    };
+
+    const removeMember = (id) => {
+        setFormData({
+            ...formData,
+            groupMembers: formData.groupMembers.filter(m => m._id !== id)
+        });
     };
 
     const handleCreate = async () => {
         if (!formData.topic || !formData.description) {
-            Alert.alert("Missing Info", "Please provide a topic and description.");
+            Alert.alert("Required", "Please provide a topic and description.");
+            return;
+        }
+
+        const hasIndividualAssigned = formData.projectType === "Individual" && formData.assignedStudent;
+        const hasGroupAssigned = formData.projectType === "Group" && formData.groupMembers.length > 0;
+
+        if (isAdmin && !hasIndividualAssigned && !hasGroupAssigned) {
+            Alert.alert("Selection Required", "Please assign at least one student to this project.");
             return;
         }
 
         setLoading(true);
         try {
             const token = await AsyncStorage.getItem("userToken");
-            
-            // LOGIC: If Admin and no student selected, it's null. 
-            // If Student, it's their own ID.
-            const assignedId = isAdmin 
-                ? (formData.assignedStudent?._id || null) 
-                : userId;
 
             const payload = {
                 title: formData.topic,
                 description: formData.description,
-                type: formData.projectType,
+                projectType: formData.projectType,
                 department: formData.dept,
-                // Students don't see deadline, so we provide a default (30 days)
-                deadline: isAdmin ? formData.deadline.toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                assignedTo: assignedId,
-                members: isAdmin ? formData.groupMembers.map(m => m._id) : []
+                deadline: formData.deadline.toISOString(),
+                // If Individual, use assignedStudent. If Group, use the first person in list as primary (or null based on your API)
+                assignedTo: isAdmin 
+                    ? (formData.projectType === "Individual" ? formData.assignedStudent?._id : formData.groupMembers[0]?._id) 
+                    : userId,
+                supervisor: isAdmin ? userId : null,
+                members: formData.projectType === "Group" ? formData.groupMembers.map(m => m._id) : [],
+                status: "active"
             };
 
             await axios.post(`${API_URL}/projects`, payload, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            Alert.alert("Success", "Project initialized successfully.");
-            router.back();
+            Alert.alert("Success", "Project initialized successfully.", [
+                { text: "OK", onPress: handleSafeBack }
+            ]);
         } catch (err) {
-            console.log("Creation Error:", err.response?.data);
             Alert.alert("Error", err.response?.data?.message || "Failed to create project.");
         } finally {
             setLoading(false);
@@ -143,134 +169,190 @@ export default function CreateProject() {
     return (
         <SafeAreaView className="flex-1 bg-white" edges={['top']}>
             <View className="px-6 py-4 flex-row items-center justify-between">
-                <Pressable onPress={() => router.back()} className="p-2 bg-gray-50 rounded-full">
+                <Pressable onPress={handleSafeBack} className="p-2 bg-gray-50 rounded-full">
                     <Ionicons name="close" size={22} color="black" />
                 </Pressable>
-                <View className="bg-slate-100 px-4 py-1.5 rounded-full">
-                    <Text className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">
-                        {userRole || 'Loading...'}
-                    </Text>
-                </View>
+                <Text className="font-black uppercase text-[12px] tracking-widest text-slate-400">Initialize Project</Text>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} className="px-6 pt-4" contentContainerStyle={{ paddingBottom: 60 }}>
-                <View className="mb-8">
-                    <Text className="text-3xl font-black text-black">New Entry</Text>
-                    <Text className="text-gray-400 font-medium">Research Repository Registration</Text>
-                </View>
+                {isAdmin && (
+                    <View className="flex-row bg-gray-100 p-1.5 rounded-[20px] mb-8">
+                        {["Individual", "Group"].map((type) => (
+                            <Pressable
+                                key={type}
+                                onPress={() => setFormData({ ...formData, projectType: type })}
+                                className={`flex-1 py-3 rounded-[15px] items-center ${formData.projectType === type ? 'bg-white' : ''}`}
+                                style={formData.projectType === type ? { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 } : {}}
+                            >
+                                <Text className={`font-bold ${formData.projectType === type ? 'text-indigo-600' : 'text-gray-400'}`}>{type}</Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                )}
 
                 <View className="gap-6">
-                    {/* ADMIN ONLY FIELDS */}
+                    <View>
+                        <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">Research Topic</Text>
+                        <TextInput
+                            placeholder="Enter project title..."
+                            className="bg-gray-50 border border-gray-100 p-5 rounded-[25px] font-bold text-slate-800"
+                            value={formData.topic}
+                            onChangeText={(txt) => setFormData({ ...formData, topic: txt })}
+                        />
+                    </View>
+
+                    <View>
+                        <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">Project Scope</Text>
+                        <TextInput
+                            multiline
+                            numberOfLines={4}
+                            placeholder="Describe the objectives..."
+                            className="bg-gray-50 border border-gray-100 p-5 rounded-[25px] font-medium h-32"
+                            style={{ textAlignVertical: 'top' }}
+                            value={formData.description}
+                            onChangeText={(txt) => setFormData({ ...formData, description: txt })}
+                        />
+                    </View>
+
                     {isAdmin && (
                         <>
                             <View>
-                                <Text className="text-[10px] font-black text-gray-400 uppercase mb-3 ml-2 tracking-widest">Project Deadline</Text>
-                                <Pressable 
+                                <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">
+                                    {formData.projectType === "Individual" ? "Assign Student" : "Group Members"}
+                                </Text>
+                                
+                                {/* UI for Group Selection - Chips */}
+                                {formData.projectType === "Group" && formData.groupMembers.length > 0 && (
+                                    <View className="flex-row flex-wrap gap-2 mb-3 px-2">
+                                        {formData.groupMembers.map(member => (
+                                            <View key={member._id} className="bg-indigo-100 px-3 py-2 rounded-full flex-row items-center">
+                                                <Text className="text-indigo-700 font-bold text-xs mr-2">{member.fullName || member.name}</Text>
+                                                <Pressable onPress={() => removeMember(member._id)}>
+                                                    <Ionicons name="close-circle" size={16} color="#4338ca" />
+                                                </Pressable>
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
+
+                                <Pressable
+                                    onPress={() => setModalVisible(true)}
+                                    className="bg-slate-900 p-5 rounded-[25px] flex-row justify-between items-center"
+                                >
+                                    <View className="flex-1">
+                                        <Text className="text-white font-bold">
+                                            {formData.projectType === "Individual" 
+                                                ? (formData.assignedStudent?.fullName || "Select from directory")
+                                                : `Add Members (${formData.groupMembers.length} selected)`}
+                                        </Text>
+                                    </View>
+                                    <Ionicons name={formData.projectType === "Individual" ? "person-add" : "people-outline"} size={18} color="white" />
+                                </Pressable>
+                            </View>
+
+                            <View>
+                                <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">Project Deadline</Text>
+                                <Pressable
                                     onPress={() => setShowDatePicker(true)}
                                     className="bg-indigo-50 border border-indigo-100 p-5 rounded-[25px] flex-row justify-between items-center"
                                 >
-                                    <View className="flex-row items-center">
-                                        <Ionicons name="calendar" size={18} color="#6366f1" />
-                                        <Text className="text-indigo-600 font-bold ml-3">
-                                            {formData.deadline.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-                                        </Text>
-                                    </View>
-                                    <Text className="text-[10px] font-black text-indigo-400 uppercase">Change</Text>
-                                </Pressable>
-                                {showDatePicker && (
-                                    <DateTimePicker
-                                        value={formData.deadline}
-                                        mode="date"
-                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                        onChange={(e, date) => { setShowDatePicker(false); if(date) setFormData({...formData, deadline: date})}}
-                                        minimumDate={new Date()}
-                                    />
-                                )}
-                            </View>
-
-                            <View className="bg-slate-900 p-6 rounded-[35px]">
-                                <Text className="text-[10px] font-black text-indigo-300 uppercase mb-3 tracking-widest">
-                                    {formData.projectType === "Individual" ? "Assign Lead Student" : "Add Team Members"}
-                                </Text>
-                                <Pressable 
-                                    onPress={() => { 
-                                        setSelectionType(formData.projectType === "Individual" ? "assign" : "group"); 
-                                        setModalVisible(true); 
-                                    }}
-                                    className="bg-white/10 p-5 rounded-[20px] flex-row justify-between items-center"
-                                >
-                                    <Text className={`font-bold ${formData.assignedStudent ? 'text-white' : 'text-white/40'}`}>
-                                        {formData.projectType === "Individual" 
-                                            ? (formData.assignedStudent?.name || formData.assignedStudent?.fullName || "Not yet assigned")
-                                            : `Add Members (${formData.groupMembers.length} selected)`
-                                        }
+                                    <Text className="text-indigo-600 font-bold">
+                                        {formData.deadline.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
                                     </Text>
-                                    <Ionicons name="add" size={18} color="white" />
+                                    <Ionicons name="calendar" size={18} color="#6366f1" />
                                 </Pressable>
                             </View>
                         </>
                     )}
 
-                    {/* PUBLIC FIELDS */}
-                    <View>
-                        <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">Research Topic</Text>
-                        <TextInput
-                            placeholder="e.g. Urban IoT Framework"
-                            className="bg-gray-50 border border-gray-100 p-5 rounded-[25px] font-medium"
-                            value={formData.topic}
-                            onChangeText={(txt) => setFormData({...formData, topic: txt})}
+                    {showDatePicker && (
+                        <DateTimePicker
+                            value={formData.deadline}
+                            mode="date"
+                            display="default"
+                            onChange={(e, date) => { setShowDatePicker(false); if (date) setFormData({ ...formData, deadline: date }) }}
+                            minimumDate={new Date()}
                         />
-                    </View>
+                    )}
 
-                    <View>
-                        <Text className="text-[10px] font-black text-gray-400 uppercase mb-2 ml-2 tracking-widest">Description</Text>
-                        <TextInput
-                            multiline
-                            numberOfLines={4}
-                            placeholder="Provide a brief overview..."
-                            className="bg-gray-50 border border-gray-100 p-5 rounded-[25px] font-medium h-32"
-                            style={{ textAlignVertical: 'top' }}
-                            value={formData.description}
-                            onChangeText={(txt) => setFormData({...formData, description: txt})}
-                        />
-                    </View>
-
-                    <Pressable 
+                    <Pressable
                         onPress={handleCreate}
                         disabled={loading}
-                        className={`py-6 rounded-[30px] items-center ${loading ? 'bg-gray-400' : 'bg-black'}`}
+                        className={`py-6 rounded-[30px] items-center mt-4 ${loading ? 'bg-gray-400' : 'bg-black'}`}
                     >
                         {loading ? <ActivityIndicator color="white" /> : <Text className="text-white font-black uppercase tracking-[2px]">Initialize Project</Text>}
                     </Pressable>
                 </View>
             </ScrollView>
 
-            {/* Selection Modal */}
-            <Modal visible={modalVisible} animationType="slide" transparent={true}>
-                <View className="flex-1 bg-black/50 justify-end">
-                    <View className="bg-white h-[70%] rounded-t-[40px] p-6">
+            <Modal 
+                visible={modalVisible} 
+                animationType="slide" 
+                transparent={true}
+                onRequestClose={() => setModalVisible(false)}
+            >
+                <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                    <View className="bg-white h-[80%] rounded-t-[40px] p-6 shadow-2xl">
                         <View className="flex-row justify-between items-center mb-6">
-                            <Text className="text-xl font-black">Select Student</Text>
+                            <View>
+                                <Text className="text-2xl font-black">Student List</Text>
+                                {formData.projectType === "Group" && (
+                                    <Text className="text-indigo-500 font-bold text-xs">{formData.groupMembers.length} Selected</Text>
+                                )}
+                            </View>
                             <Pressable onPress={() => setModalVisible(false)} className="bg-gray-100 p-2 rounded-full">
-                                <Ionicons name="close" size={20} color="black" />
+                                <Ionicons name="checkmark-done" size={24} color="#6366f1" />
                             </Pressable>
                         </View>
+
+                        <TextInput
+                            placeholder="Search by name..."
+                            className="bg-gray-100 p-4 rounded-2xl mb-4 font-bold"
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                        />
+
                         <FlatList
                             data={filteredStudents}
                             keyExtractor={(item) => item._id}
-                            renderItem={({ item }) => (
-                                <Pressable 
-                                    onPress={() => handleSelectStudent(item)}
-                                    className="py-5 border-b border-gray-50 flex-row justify-between items-center"
-                                >
-                                    <View>
-                                        <Text className="font-bold text-slate-900">{item.name || item.fullName}</Text>
-                                        <Text className="text-[10px] text-slate-400 font-bold uppercase">{item.department || 'Student'}</Text>
-                                    </View>
-                                    <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-                                </Pressable>
+                            renderItem={({ item }) => {
+                                const isSelected = formData.projectType === "Individual" 
+                                    ? formData.assignedStudent?._id === item._id
+                                    : formData.groupMembers.find(m => m._id === item._id);
+
+                                return (
+                                    <Pressable
+                                        onPress={() => handleSelectStudent(item)}
+                                        className={`py-4 px-4 rounded-2xl mb-2 flex-row justify-between items-center ${isSelected ? 'bg-indigo-50 border border-indigo-100' : 'bg-white'}`}
+                                    >
+                                        <View>
+                                            <Text className={`font-bold text-lg ${isSelected ? 'text-indigo-700' : 'text-slate-900'}`}>
+                                                {item.fullName || item.name}
+                                            </Text>
+                                            <Text className="text-[10px] text-gray-400 font-bold uppercase">{item.email}</Text>
+                                        </View>
+                                        <View className={`w-6 h-6 rounded-full border items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}>
+                                            {isSelected && <Ionicons name="checkmark" size={16} color="white" />}
+                                        </View>
+                                    </Pressable>
+                                );
+                            }}
+                            ListEmptyComponent={() => (
+                                <View className="py-20 items-center">
+                                    <Text className="text-gray-400 font-bold">No students found.</Text>
+                                </View>
                             )}
                         />
+                        
+                        {formData.projectType === "Group" && (
+                             <Pressable 
+                                onPress={() => setModalVisible(false)}
+                                className="bg-indigo-600 py-4 rounded-2xl items-center mt-2"
+                             >
+                                <Text className="text-white font-black uppercase">Done Selecting</Text>
+                             </Pressable>
+                        )}
                     </View>
                 </View>
             </Modal>

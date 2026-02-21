@@ -2,201 +2,209 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
 
 export default function Home() {
   const router = useRouter();
-
   const [user, setUser] = useState(null);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = async () => {
+  // --- ADVANCED DEBUGGER ---
+  const debugLog = (context, error) => {
+    console.log(`\n--- DEBUG START: ${context} ---`);
+    if (error.response) {
+      // Server responded with a status code outside of 2xx
+      console.error(`Status: ${error.response.status}`);
+      console.error(`Data:`, JSON.stringify(error.response.data, null, 2));
+      console.error(`Headers:`, error.response.headers);
+    } else if (error.request) {
+      // Request was made but no response received
+      console.error("No response received. Check internet or API URL.");
+      console.error(`Request Details:`, error.request);
+    } else {
+      // Something happened in setting up the request
+      console.error(`Error Message: ${error.message}`);
+    }
+    console.log(`--- DEBUG END ---\n`);
+  };
+
+  const fetchData = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
-      
+      console.log("🔑 Auth Token Found:", token ? "Yes (starts with " + token.substring(0, 10) + "...)" : "No");
+
       if (!token) {
-        setLoading(false);
-        router.replace("/login"); // Redirect if no token
-        return;
+        console.warn("No token found, redirecting to login...");
+        return router.replace("/login");
       }
 
       const headers = { Authorization: `Bearer ${token}` };
 
-      // 1. Fetch Data in Parallel for speed
+      // Using Promise.allSettled to see which specific request fails
       const [userRes, projectRes] = await Promise.allSettled([
-        axios.get(`${API_URL}/users/me`, { headers }),
-        axios.get(`${API_URL}/projects`, { headers })
+        axios.get(`${API_URL}/users/me`, { headers, timeout: 10000 }),
+        axios.get(`${API_URL}/projects`, { headers, timeout: 10000 })
       ]);
 
-      // --- HANDLE USER DATA ---
+      // Handle User Data Result
       if (userRes.status === "fulfilled") {
-        // Support both {user: {...}} and {...} structures
         const userData = userRes.value.data.user || userRes.value.data;
         setUser(userData);
-        // Store for offline fallback
         await AsyncStorage.setItem("userData", JSON.stringify(userData));
+        await AsyncStorage.setItem("user", JSON.stringify(userData));
       } else {
-        console.error("User Fetch Error:", userRes.reason?.response?.status);
+        debugLog("User Data Fetch", userRes.reason);
+        if (userRes.reason.response?.status === 401) router.replace("/login");
       }
 
-      // --- HANDLE PROJECT DATA ---
+      // Handle Project Data Result
       if (projectRes.status === "fulfilled") {
         const pData = projectRes.value.data;
-        // Check if data is array, or inside .projects, or inside .data
-        const finalProjects = Array.isArray(pData) 
-          ? pData 
-          : (pData.projects || pData.data || []);
+        const finalProjects = Array.isArray(pData) ? pData : (pData.projects || pData.data || []);
+        console.log(`✅ Sync Successful: Found ${finalProjects.length} projects.`);
         setProjects(finalProjects);
       } else {
-        // This is likely your 400 error source
-        console.error("Project Fetch Error Details:", projectRes.reason?.response?.data);
+        debugLog("Project List Fetch", projectRes.reason);
       }
 
     } catch (err) {
-      console.error("Home Critical Error:", err.message);
+      debugLog("General Home Sync Error", err);
+      Alert.alert("Sync Error", "Could not connect to the server. Please check your connection.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchData();
-  };
+  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin';
 
-  const featuredProject = projects.length > 0 ? projects[0] : null;
-
-  const crispShadow = {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 4, 
-  };
-
-  if (loading) {
-    return (
-      <View className="flex-1 justify-center items-center bg-white">
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text className="mt-4 text-gray-400 font-medium">Loading Workspace...</Text>
-      </View>
-    );
-  }
+  if (loading) return (
+    <View className="flex-1 justify-center items-center bg-white">
+      <ActivityIndicator size="large" color="#6366f1" />
+      <Text className="mt-4 text-gray-400 font-bold">Waking up server...</Text>
+    </View>
+  );
 
   return (
     <SafeAreaView style={{ flex: 1 }} className="bg-white">
       <ScrollView 
-        showsVerticalScrollIndicator={false} 
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} color="#6366f1" />
+        }
         className="px-6 pt-4"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} color="#6366f1" />}
+        showsVerticalScrollIndicator={false}
       >
-        
-        {/* HEADER AREA */}
+        {/* --- HEADER --- */}
         <View className="flex-row justify-between items-center mb-8">
           <View>
-            <Text className="text-gray-400 text-sm font-semibold uppercase tracking-widest">
-              Welcome back,
+            <Text className="text-gray-400 text-[10px] font-black uppercase tracking-widest">
+              {isAdmin ? "Supervisor Access" : "Student Workspace"}
             </Text>
-            <Text className="text-3xl font-black text-black tracking-tight">
-              {user?.fullName?.split(' ')[0] || user?.name || "User"}
+            <Text className="text-3xl font-black text-black">
+              Hello, {user?.fullName?.split(' ')[0] || "User"}
             </Text>
           </View>
-
-          <View className="flex-row items-center gap-3">
-            <Pressable 
-              onPress={() => router.push("/profile-details")} 
-              style={crispShadow}
-              className="w-12 h-12 rounded-2xl bg-white border border-gray-100 items-center justify-center"
-            >
-              <Ionicons name="person-circle-outline" size={26} color="black" />
-            </Pressable>
-          </View>
+          <Pressable 
+            onPress={() => router.push("/profile-details")} 
+            className="w-12 h-12 rounded-2xl bg-gray-50 items-center justify-center border border-gray-100 shadow-sm"
+          >
+            <Ionicons name="person-outline" size={22} color="black" />
+          </Pressable>
         </View>
 
-        {/* HERO CARD */}
-        {featuredProject ? (
-          <Pressable 
-            onPress={() => router.push({ pathname: "/project-details", params: { id: featuredProject._id } })} 
-            className="bg-indigo-600 p-6 rounded-[35px] mb-8 shadow-xl shadow-indigo-200"
-          >
-             <View className="flex-row justify-between items-center mb-4">
-                <Text className="text-white/70 text-[10px] font-black uppercase tracking-[2px]">
-                    Active Project
-                </Text>
-                <Ionicons name="rocket-outline" size={16} color="white" />
-             </View>
-            <Text className="text-white text-2xl font-bold leading-8 mb-6">
-              {featuredProject.title}
-            </Text>
-            <View className="flex-row items-center gap-4">
-              <View className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
-                <View 
-                  style={{ width: `${featuredProject.progress || 0}%` }} 
-                  className="h-full bg-white rounded-full" 
-                />
+        {/* --- MANAGEMENT PANEL (ADMIN ONLY) --- */}
+        {isAdmin && (
+          <View className="bg-slate-900 p-7 rounded-[40px] mb-10 shadow-2xl">
+            <View className="flex-row items-center">
+              <View className="flex-1 items-center border-r border-white/10">
+                <Text className="text-white text-3xl font-black">{projects.length}</Text>
+                <Text className="text-indigo-400 font-black text-[8px] uppercase tracking-widest">Projects</Text>
               </View>
-              <Text className="text-white font-black text-xs">{featuredProject.progress || 0}%</Text>
+              <Pressable 
+                onPress={() => router.push("/converted-groups")} 
+                className="flex-1 items-center"
+              >
+                <Ionicons name="people" size={24} color="#10b981" />
+                <Text className="text-emerald-400 font-black text-[8px] uppercase tracking-widest">Manage Teams</Text>
+              </Pressable>
             </View>
-          </Pressable>
-        ) : (
-          <View className="bg-slate-50 p-10 rounded-[35px] mb-8 border border-dashed border-slate-200 items-center">
-             <View className="w-16 h-16 bg-white rounded-full items-center justify-center shadow-sm mb-4">
-                <Ionicons name="briefcase-outline" size={28} color="#cbd5e1" />
-             </View>
-             <Text className="text-slate-400 font-bold text-center">No projects assigned to you yet.</Text>
           </View>
         )}
 
-        {/* TRACKERS HEADER */}
-        <View className="flex-row justify-between items-end mb-6 px-1">
-          <Text className="text-xl font-black text-black">Your Trackers</Text>
-          <Pressable onPress={() => router.push("/projects")}> 
-            <Text className="text-indigo-600 text-xs font-black uppercase">See All</Text>
+        {/* --- PROJECT LIST --- */}
+        <View className="flex-row justify-between items-center mb-6">
+          <Text className="text-xl font-black text-slate-900">Active Workstreams</Text>
+          <Pressable onPress={() => router.push("/projects")}>
+            <Text className="text-indigo-600 text-xs font-black uppercase">Archive</Text>
           </Pressable>
         </View>
 
-        {/* PROJECT LIST */}
-        <View className="pb-10">
-          {projects.length > 0 ? (
-            projects.map((project) => (
+        {projects.length > 0 ? (
+          projects.map((p) => {
+            const isGroup = p.members?.length > 1 || p.projectType?.toLowerCase() === "group";
+            
+            return (
               <Pressable 
-                key={project._id} 
-                onPress={() => router.push({ pathname: "/project-details", params: { id: project._id } })} 
-                style={crispShadow}
-                className="flex-row items-center bg-white border border-slate-50 p-5 rounded-[25px] mb-4"
+                key={p._id} 
+                onPress={() => {
+                  console.log(`🎯 Navigating to: ${isGroup ? 'Group' : 'Individual'} ID: ${p._id}`);
+                  if (isGroup) {
+                    router.push(`/group-project/${p._id}`);
+                  } else {
+                    router.push(`/project-details?id=${p._id}`);
+                  }
+                }} 
+                className="flex-row items-center bg-gray-50 p-5 rounded-[30px] mb-4 border border-gray-100"
               >
-                <View className="w-12 h-12 rounded-2xl bg-slate-50 items-center justify-center mr-4 border border-slate-100">
-                  <Ionicons name="layers-outline" size={20} color="#6366f1" />
+                <View className="w-12 h-12 rounded-2xl bg-white items-center justify-center mr-4 shadow-sm border border-gray-50">
+                  <Ionicons name={isGroup ? "people" : "document-text"} size={20} color="#6366f1" />
                 </View>
-                <View className="flex-1">
-                  <Text className="text-black font-bold text-[16px] mb-1">{project.title}</Text>
-                  <Text className="text-slate-400 text-[11px] font-black uppercase tracking-tighter">
-                    {project.status || "In Progress"}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-              </Pressable>
-            ))
-          ) : (
-            <View className="items-center py-10">
-              <Ionicons name="file-tray-outline" size={48} color="#e2e8f0" />
-              <Text className="text-center text-slate-300 mt-4 font-bold">List is empty</Text>
-            </View>
-          )}
-        </View>
 
+                <View className="flex-1">
+                  <Text className="font-bold text-slate-800" numberOfLines={1}>{p.title}</Text>
+                  <View className="flex-row items-center mt-1">
+                    <Text className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mr-2">
+                      {p.status || 'Active'}
+                    </Text>
+                    {isGroup && (
+                      <View className="bg-indigo-100 px-2 py-0.5 rounded-full">
+                        <Text className="text-indigo-600 text-[8px] font-black uppercase">Team</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+              </Pressable>
+            );
+          })
+        ) : (
+          <View className="py-20 items-center justify-center bg-gray-50 rounded-[40px] border border-dashed border-gray-200">
+            <Ionicons name="folder-open-outline" size={48} color="#cbd5e1" />
+            <Text className="text-gray-400 mt-4 font-black text-[10px] uppercase tracking-widest">No Projects Found</Text>
+          </View>
+        )}
+        
+        <View className="h-24" />
       </ScrollView>
+
+      {!isAdmin && (
+        <Pressable 
+          onPress={() => router.push("/create-project")}
+          className="absolute bottom-10 right-8 w-16 h-16 bg-indigo-600 rounded-full items-center justify-center shadow-2xl"
+        >
+          <Ionicons name="add" size={32} color="white" />
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }
