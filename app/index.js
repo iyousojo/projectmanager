@@ -6,7 +6,7 @@ import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 // ✅ Set to false for production so users only see this once
-const DEV_ALWAYS_SHOW_WELCOME = true; 
+const DEV_ALWAYS_SHOW_WELCOME = false; 
 
 export default function Welcome() {
   const router = useRouter();
