@@ -3,6 +3,11 @@
     "name": "projectmanager",
     "slug": "projectmanager",
     "version": "1.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "f83b3abe-edb4-4164-93d8-b2ec65f0da3d"
+      }
+    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "projectmanager",

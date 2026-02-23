@@ -1,16 +1,19 @@
-﻿// app/(tabs)/_layout.js
-import { Ionicons } from "@expo/vector-icons";
+﻿import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { Platform, View } from "react-native";
 
 export default function TabsLayout() {
+  /** * NOTE: Push notification registration has been moved to RootLayout.js
+   * to prevent duplicate calls and "Invalid UUID" errors.
+   */
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
         tabBarActiveTintColor: "#000",
-        tabBarInactiveTintColor: "#999",
+        tabBarInactiveTintColor: "#94a3b8",
         tabBarStyle: {
           backgroundColor: "#fff",
           borderTopWidth: 0,
@@ -25,76 +28,67 @@ export default function TabsLayout() {
         },
       }}
     >
-      {/* HOME */}
       <Tabs.Screen
         name="home"
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <View style={{ alignItems: "center" }}>
+            <View className="items-center">
               <Ionicons name={focused ? "home" : "home-outline"} size={24} color={color} />
-              {focused && <View style={{ width: 4, height: 4, backgroundColor: "#000", borderRadius: 2, marginTop: 4 }} />}
+              {focused && <View className="w-1 h-1 bg-black rounded-full mt-1" />}
             </View>
           ),
         }}
       />
-
-      {/* PROJECTS */}
+      
       <Tabs.Screen
         name="projects"
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <View style={{ alignItems: "center" }}>
+            <View className="items-center">
               <Ionicons name={focused ? "folder" : "folder-outline"} size={24} color={color} />
-              {focused && <View style={{ width: 4, height: 4, backgroundColor: "#000", borderRadius: 2, marginTop: 4 }} />}
+              {focused && <View className="w-1 h-1 bg-black rounded-full mt-1" />}
             </View>
           ),
         }}
       />
 
-      {/* CREATE */}
       <Tabs.Screen
         name="create"
         options={{
           tabBarIcon: () => (
-            <View style={{
-              top: -18, width: 52, height: 52, borderRadius: 26,
-              backgroundColor: "#000", justifyContent: "center",
-              alignItems: "center", elevation: 5, shadowColor: "#000",
-              shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4,
-            }}>
-              <Ionicons name="add" size={32} color="#fff" />
+            <View 
+              style={{ top: -15 }}
+              className="w-14 h-14 bg-black rounded-full items-center justify-center shadow-lg"
+            >
+              <Ionicons name="add" size={32} color="white" />
             </View>
           ),
         }}
       />
 
-      {/* TASKS */}
       <Tabs.Screen
         name="tasks"
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <View style={{ alignItems: "center" }}>
+            <View className="items-center">
               <Ionicons name={focused ? "checkbox" : "checkbox-outline"} size={24} color={color} />
-              {focused && <View style={{ width: 4, height: 4, backgroundColor: "#000", borderRadius: 2, marginTop: 4 }} />}
+              {focused && <View className="w-1 h-1 bg-black rounded-full mt-1" />}
             </View>
           ),
         }}
       />
 
-      {/* NOTIFICATIONS */}
       <Tabs.Screen
         name="notifications"
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <View style={{ alignItems: "center" }}>
+            <View className="items-center">
               <Ionicons name={focused ? "notifications" : "notifications-outline"} size={24} color={color} />
-              {focused && <View style={{ width: 4, height: 4, backgroundColor: "#000", borderRadius: 2, marginTop: 4 }} />}
+              {focused && <View className="w-1 h-1 bg-black rounded-full mt-1" />}
             </View>
           ),
         }}
       />
-
-      
     </Tabs>
   );
 }

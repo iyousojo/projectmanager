@@ -3,134 +3,154 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const API_URL = "https://projectmanagerapi-o885.onrender.com/api";
 
-export default function Home() {
+export default function ProjectArchive() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // --- ADVANCED DEBUGGER (Mirrored from Home.js) ---
+  const debugLog = (context, error) => {
+    console.log(`\n--- DEBUG START: ${context} ---`);
+    if (error.response) {
+      console.error(`Status: ${error.response.status}`);
+      console.error(`Data:`, JSON.stringify(error.response.data, null, 2));
+    } else if (error.request) {
+      console.error("No response received. Check internet or API URL.");
+    } else {
+      console.error(`Error Message: ${error.message}`);
+    }
+    console.log(`--- DEBUG END ---\n`);
+  };
+
   const fetchData = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
       if (!token) {
-        router.replace("/login");
-        return;
+        return router.replace("/login");
       }
 
       const headers = { Authorization: `Bearer ${token}` };
 
-      // Get fresh data from Database
       const [userRes, projectRes] = await Promise.allSettled([
-        axios.get(`${API_URL}/users/me`, { headers }),
-        axios.get(`${API_URL}/projects`, { headers })
+        axios.get(`${API_URL}/users/me`, { headers, timeout: 10000 }),
+        axios.get(`${API_URL}/projects`, { headers, timeout: 10000 })
       ]);
 
       if (userRes.status === "fulfilled") {
         const userData = userRes.value.data.user || userRes.value.data;
         setUser(userData);
-        await AsyncStorage.setItem("user", JSON.stringify(userData));
+      } else {
+        debugLog("User Data Fetch", userRes.reason);
       }
 
       if (projectRes.status === "fulfilled") {
         const pData = projectRes.value.data;
         const finalProjects = Array.isArray(pData) ? pData : (pData.projects || pData.data || []);
         setProjects(finalProjects);
+      } else {
+        debugLog("Project List Fetch", projectRes.reason);
       }
     } catch (err) {
-      console.error("Home Data Sync Error:", err);
+      debugLog("General Archive Sync Error", err);
+      Alert.alert("Sync Error", "Could not connect to the server.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [router]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super-admin';
-  const featuredProject = projects.length > 0 ? projects[0] : null;
 
   if (loading) return (
     <View className="flex-1 justify-center items-center bg-white">
       <ActivityIndicator size="large" color="#6366f1" />
+      <Text className="mt-4 text-gray-400 font-bold">Loading Archive...</Text>
     </View>
   );
 
   return (
     <SafeAreaView style={{ flex: 1 }} className="bg-white">
       <ScrollView 
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} color="#6366f1" />
+        }
         className="px-6 pt-4"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchData} color="#6366f1" />}
+        showsVerticalScrollIndicator={false}
       >
-        <View className="flex-row justify-between items-center mb-8">
+        {/* --- HEADER (With Back Button) --- */}
+        <View className="flex-row items-center mb-8">
+          <Pressable 
+            onPress={() => router.back()} 
+            className="w-10 h-10 rounded-full bg-gray-50 items-center justify-center mr-4"
+          >
+            <Ionicons name="arrow-back" size={20} color="black" />
+          </Pressable>
           <View>
-            <Text className="text-gray-400 text-sm font-semibold uppercase tracking-widest">
-              {isAdmin ? "Administrator" : "Student"} Workspace
+            <Text className="text-gray-400 text-[10px] font-black uppercase tracking-widest">
+              Project History
             </Text>
-            <Text className="text-3xl font-black text-black tracking-tight">
-              {user?.fullName?.split(' ')[0] || "User"}
+            <Text className="text-3xl font-black text-black">
+              All Projects
             </Text>
           </View>
-          <Pressable onPress={() => router.push("/profile-details")} className="w-12 h-12 rounded-2xl bg-slate-50 items-center justify-center border border-slate-100">
-            <Ionicons name="person" size={20} color="black" />
-          </Pressable>
         </View>
 
-        {isAdmin && (
-          <View className="flex-row gap-3 mb-8">
-            <Pressable onPress={() => router.push("/converted-groups")} className="flex-1 bg-indigo-600 p-5 rounded-[30px] items-center">
-              <Ionicons name="people" size={24} color="white" />
-              <Text className="text-white font-black text-[10px] uppercase mt-2">Manage Teams</Text>
-            </Pressable>
-            <Pressable className="flex-1 bg-slate-900 p-5 rounded-[30px] items-center">
-              <Text className="text-white font-black text-xl">{projects.length}</Text>
-              <Text className="text-slate-400 font-black text-[10px] uppercase">Active Projects</Text>
-            </Pressable>
+        {/* --- LIST (Mirrored Logic) --- */}
+        {projects.length > 0 ? (
+          projects.map((p) => {
+            const isGroup = p.members?.length > 1 || p.projectType?.toLowerCase() === "group";
+            
+            return (
+              <Pressable 
+                key={p._id} 
+                onPress={() => {
+                  // EXACT SAME NAVIGATION AS HOME.JS
+                  if (isGroup) {
+                    router.push(`/group-project/${p._id}`);
+                  } else {
+                    router.push(`/project-details?id=${p._id}`);
+                  }
+                }} 
+                className="flex-row items-center bg-gray-50 p-5 rounded-[30px] mb-4 border border-gray-100"
+              >
+                <View className="w-12 h-12 rounded-2xl bg-white items-center justify-center mr-4 shadow-sm border border-gray-50">
+                  <Ionicons name={isGroup ? "people" : "document-text"} size={20} color="#6366f1" />
+                </View>
+
+                <View className="flex-1">
+                  <Text className="font-bold text-slate-800" numberOfLines={1}>{p.title}</Text>
+                  <View className="flex-row items-center mt-1">
+                    <Text className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mr-2">
+                      {p.status || 'Active'}
+                    </Text>
+                    {isGroup && (
+                      <View className="bg-indigo-100 px-2 py-0.5 rounded-full">
+                        <Text className="text-indigo-600 text-[8px] font-black uppercase">Team</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+              </Pressable>
+            );
+          })
+        ) : (
+          <View className="py-20 items-center justify-center bg-gray-50 rounded-[40px] border border-dashed border-gray-200">
+            <Ionicons name="folder-open-outline" size={48} color="#cbd5e1" />
+            <Text className="text-gray-400 mt-4 font-black text-[10px] uppercase tracking-widest">Archive is empty</Text>
           </View>
         )}
-
-        {featuredProject && (
-          <Pressable 
-            onPress={() => router.push({ pathname: "/project-details", params: { id: featuredProject._id } })}
-            className="bg-slate-900 p-8 rounded-[40px] mb-8"
-          >
-            <Text className="text-indigo-400 text-[10px] font-black uppercase tracking-widest mb-2">Primary Project</Text>
-            <Text className="text-white text-2xl font-bold mb-6">{featuredProject.title}</Text>
-            <View className="flex-row items-center justify-between">
-              <Text className="text-white/50 text-xs font-bold">{featuredProject.status || 'Active'}</Text>
-              <Ionicons name="arrow-forward-circle" size={32} color="#6366f1" />
-            </View>
-          </Pressable>
-        )}
-
-        <View className="flex-row justify-between items-end mb-6">
-          <Text className="text-xl font-black text-black">Project Trackers</Text>
-          <Pressable onPress={() => router.push("/projects")}>
-            <Text className="text-indigo-600 text-xs font-black uppercase">Archive</Text>
-          </Pressable>
-        </View>
-
-        {projects.map((p) => (
-          <Pressable 
-            key={p._id} 
-            onPress={() => router.push({ pathname: "/project-details", params: { id: p._id } })}
-            className="flex-row items-center bg-gray-50 p-5 rounded-[25px] mb-4 border border-gray-100"
-          >
-            <View className="w-10 h-10 rounded-xl bg-white items-center justify-center mr-4">
-              <Ionicons name="layers" size={18} color="#6366f1" />
-            </View>
-            <View className="flex-1">
-              <Text className="font-bold text-slate-800">{p.title}</Text>
-              <Text className="text-[10px] font-black text-slate-400 uppercase">{p.status}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
-          </Pressable>
-        ))}
       </ScrollView>
     </SafeAreaView>
   );

@@ -22,6 +22,20 @@ export default function AdminDashboard() {
     fetchAllData();
   }, []);
 
+  const handleLogout = async () => {
+    Alert.alert("Logout", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      { 
+        text: "Logout", 
+        style: "destructive", 
+        onPress: async () => {
+          await AsyncStorage.clear();
+          router.replace("/login");
+        } 
+      }
+    ]);
+  };
+
   const fetchAllData = async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -31,15 +45,13 @@ export default function AdminDashboard() {
       }
       const headers = { Authorization: `Bearer ${token}` };
 
-      // FIX: Added ?status=unassigned to satisfy the Backend Controller logic
       const studentRes = await axios.get(`${API_URL}/users/superadmin/students?status=unassigned`, { headers });
       const adminRes = await axios.get(`${API_URL}/users/superadmin/admins`, { headers });
 
       setStudents(Array.isArray(studentRes.data) ? studentRes.data : []);
       setSupervisors(Array.isArray(adminRes.data) ? adminRes.data : []);
     } catch (err) {
-      console.error("Fetch error details:", err.response?.data || err.message);
-      // Detailed alert helps debug if it's a validation error or auth error
+      console.error("Fetch error:", err.message);
       Alert.alert("Sync Error", err.response?.data?.message || "Could not load data.");
     } finally {
       setLoading(false);
@@ -91,14 +103,16 @@ export default function AdminDashboard() {
 
   return (
     <SafeAreaView className="flex-1 bg-slate-900" edges={['top']}>
-      {/* HEADER - Updated navigation to use push for a better stack feel */}
+      {/* HEADER */}
       <View className="px-6 py-4 flex-row items-center justify-between border-b border-white/10">
         <View>
           <Text className="text-[10px] font-black uppercase tracking-[3px] text-indigo-400">Master Control</Text>
           <Text className="text-2xl font-black text-white">Allocation</Text>
         </View>
+        
         <Pressable 
-          onPress={() => router.push("/profile")} 
+          onLongPress={handleLogout} 
+          onPress={() => router.push("/(admin)/profile")} 
           className="bg-indigo-500/20 p-3 rounded-2xl active:bg-indigo-500/40"
         >
           <Ionicons name="person" size={20} color="#818cf8" />
@@ -180,7 +194,7 @@ export default function AdminDashboard() {
                     <Text className="font-black text-lg text-slate-800">{item.fullName}</Text>
                     <Text className="text-indigo-600 font-black text-xs">{item.studentCount || 0}/10</Text>
                   </View>
-                  <Text className="text-slate-400 text-xs mt-1">{item.department}</Text>
+                  <Text className="text-slate-400 text-xs mt-1">{item.department || "General"}</Text>
                 </Pressable>
               )}
             />

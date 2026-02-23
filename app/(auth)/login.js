@@ -72,16 +72,22 @@ const handleLogin = async () => {
     if (!email || !password) return setToast({ visible: true, message: "Please fill all fields", type: "error" });
     setLoading(true);
     try {
+      // Try to get the token that RootLayout just saved
       const expoPushToken = await AsyncStorage.getItem("pushToken");
-      const response = await axios.post(`${API_URL}/auth/login`, { email, password, expoPushToken });
+      
+      const response = await axios.post(`${API_URL}/auth/login`, { 
+        email, 
+        password, 
+        expoPushToken // Pass to backend even if it's null
+      });
       
       const { token, user } = response.data;
 
-      // --- CRITICAL: MATCHING KEYS ---
+      // Store Auth Data
       await AsyncStorage.setItem("userToken", token);
       await AsyncStorage.setItem("userData", JSON.stringify(user));
 
-      // Route based on the role we just got from the DB
+      // Navigate based on role
       if (user.role === "super-admin") {
         router.replace("/(admin)/dashboard");
       } else {
@@ -89,9 +95,15 @@ const handleLogin = async () => {
       }
 
     } catch (err) {
-      setToast({ visible: true, message: err.response?.data?.message || "Login failed", type: "error" });
-    } finally { setLoading(false); }
-  };
+      setToast({ 
+        visible: true, 
+        message: err.response?.data?.message || "Login failed", 
+        type: "error" 
+      });
+    } finally { 
+      setLoading(false); 
+    }
+};
 
   const handleUpdatePassword = async () => {
     if (newPassword.length < 6) return setToast({ visible: true, message: "Too short", type: "error" });
