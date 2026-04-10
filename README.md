@@ -70,8 +70,7 @@ npm run web
 - **Chat**: `/chat/${id}` (personal/project), POST `/chat`
 - **Notifications**: `/notifications`, `/notifications/${id}/read`
 
-## 📱 Screenshots
-*(Add screenshots of tabs, timeline, chat here)*
+
 
 ## 🚀 Build & Deploy
 ```bash
